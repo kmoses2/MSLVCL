@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>보름달 코딩길</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&display=swap">
+<style>
+  :root {
+    color-scheme: dark;
+    --night: #121831;
+    --night-2: #1d2547;
+    --moon: #f4e7b8;
+    --persimmon: #e2713b;
+    --pine: #3f7a5f;
+    --hanji: #efe6d2;
+    --ink: #2a2522;
+    --ink-soft: #6b5f55;
+    --wrong: #b3412c;
+    --display: 'Gowun Batang', 'Nanum Myeongjo', 'Apple SD Gothic Neo', serif;
+    --body: 'Gowun Dodum', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--night);
+    color: var(--moon);
+    font-family: var(--body);
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app { position: fixed; inset: 0; }
+  #app canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  button { font: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--moon); outline-offset: 3px; }
+
+  /* HUD */
+  .hud {
+    position: fixed; left: 0; right: 0; top: 0;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 0;
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+    pointer-events: none;
+  }
+  .stage-now { display: grid; gap: 2px; text-shadow: 0 1px 8px rgba(0,0,0,.6); }
+  .stage-now small { font-size: 12px; letter-spacing: .12em; opacity: .75; }
+  .stage-now strong { font-family: var(--display); font-size: clamp(18px, 4.5vw, 24px); font-weight: 700; }
+  .moons { display: flex; gap: 6px; padding-top: 4px; }
+  .moons span {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 1.5px solid var(--moon); opacity: .6;
+    transition: background .4s, opacity .4s, box-shadow .4s;
+  }
+  .moons span.on { background: var(--moon); opacity: 1; box-shadow: 0 0 10px var(--moon); }
+
+  .prompt {
+    position: fixed; left: 50%; bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    background: var(--hanji); color: var(--ink);
+    border: 0; border-radius: 999px;
+    padding: 10px 20px; font-size: 16px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    white-space: nowrap;
+  }
+  .prompt kbd {
+    font-family: var(--body); font-size: 13px;
+    border: 1px solid var(--ink-soft); border-radius: 5px; padding: 1px 6px; margin-right: 6px;
+  }
+  .toast {
+    position: fixed; left: 50%; top: calc(80px + env(safe-area-inset-top, 0px));
+    transform: translateX(-50%);
+    background: rgba(18,24,49,.85); border: 1px solid var(--moon);
+    padding: 8px 16px; border-radius: 8px; font-size: 15px;
+    max-width: calc(100% - 32px); text-align: center;
+    pointer-events: none;
+  }
+
+  /* Touch controls */
+  .touch { display: none; }
+  body.is-touch .touch { display: block; }
+  .stick {
+    position: fixed; left: calc(24px + env(safe-area-inset-left, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+    width: 120px; height: 120px; border-radius: 50%;
+    background: rgba(244,231,184,.12); border: 1.5px solid rgba(244,231,184,.4);
+    touch-action: none;
+  }
+  .knob {
+    position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
+    border-radius: 50%; background: rgba(244,231,184,.55);
+  }
+  .act {
+    position: fixed; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    width: 82px; height: 82px; border-radius: 50%;
+    background: var(--persimmon); color: #fff8ea; border: 0;
+    font-family: var(--display); font-size: 17px; font-weight: 700;
+    box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    touch-action: manipulation;
+  }
+
+  /* Overlays */
+  .overlay {
+    position: fixed; inset: 0; display: grid; place-items: center;
+    padding: 16px; background: rgba(12,16,34,.55);
+    overflow-y: auto;
+  }
+  .card {
+    width: min(520px, 100%);
+    background: var(--hanji); color: var(--ink);
+    border-radius: 6px;
+    padding: clamp(20px, 5vw, 32px);
+    box-shadow: 0 20px 60px rgba(0,0,0,.45);
+    display: grid; gap: 16px;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(255,255,255,.5), transparent 40%),
+      repeating-linear-gradient(90deg, rgba(120,100,70,.035) 0 2px, transparent 2px 7px);
+  }
+  .eyebrow { font-size: 13px; letter-spacing: .14em; color: var(--persimmon); font-weight: 700; margin: 0; }
+  .card h1, .card h2 { font-family: var(--display); margin: 0; text-wrap: balance; line-height: 1.3; }
+  .card h1 { font-size: clamp(30px, 8vw, 42px); }
+  .card h2 { font-size: clamp(20px, 5vw, 25px); }
+  .card p { margin: 0; line-height: 1.65; font-size: 16px; }
+  .steps { margin: 0; padding-left: 1.4em; display: grid; gap: 4px; line-height: 1.5; }
+  .keys { font-size: 14px; color: var(--ink-soft); line-height: 1.6; }
+  .primary {
+    justify-self: start;
+    background: var(--night); color: var(--moon);
+    border: 0; border-radius: 4px; padding: 12px 24px;
+    font-family: var(--display); font-size: 17px; font-weight: 700;
+  }
+  .opts { display: grid; gap: 8px; }
+  .opt {
+    text-align: left; background: rgba(255,255,255,.55); color: var(--ink);
+    border: 1.5px solid rgba(42,37,34,.18); border-radius: 4px;
+    padding: 12px 14px; font-size: 15.5px; line-height: 1.45;
+    display: grid; grid-template-columns: 1.6em 1fr; gap: 6px;
+  }
+  .opt b { font-family: var(--display); color: var(--ink-soft); }
+  .opt:hover { border-color: var(--ink); }
+  .opt.wrong { border-color: var(--wrong); background: rgba(179,65,44,.08); }
+  .opt.right { border-color: var(--pine); background: rgba(63,122,95,.14); }
+  .feedback { padding: 12px 14px; border-radius: 4px; font-size: 15px; line-height: 1.6; }
+  .feedback.bad { background: rgba(179,65,44,.1); color: #7d2a1b; }
+  .feedback.good { background: rgba(63,122,95,.14); color: #24513d; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .ghost { background: transparent; border: 1.5px solid var(--ink); color: var(--ink); border-radius: 4px; padding: 10px 18px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .moons span { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="hud">
+    <div class="stage-now"><small id="stage-no">1 / 5 관문</small><strong id="stage-title">말로 시키기</strong></div>
+    <div class="moons" id="moons" aria-label="통과한 관문"></div>
+  </div>
+
+  <button class="prompt" id="prompt" hidden><kbd>E</kbd>등불에게 퀴즈 받기</button>
+  <div class="toast" id="toast" hidden></div>
+
+  <div class="touch">
+    <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
+    <button class="act" id="act" aria-label="상호작용">퀴즈</button>
+  </div>
+
+  <div class="overlay" id="intro">
+    <div class="card">
+      <p class="eyebrow">추석 특별판 · AI 코딩 복습</p>
+      <h1>보름달 코딩길</h1>
+      <p>어제 라이브에서 배운 AI 코딩 습관 다섯 가지를 한 관문씩 되짚는 길입니다. 관문마다 등불 앞에서 퀴즈를 맞히면 대문이 열려요. 다섯 관문을 모두 지나면 보름달이 뜹니다.</p>
+      <ol class="steps">
+        <li>말로 시키기</li>
+        <li>모르면 추측 말고 물어보게 하기</li>
+        <li>기획서(PRD)부터</li>
+        <li>한 번에 하나씩</li>
+        <li>깃허브에 저장하고 배포</li>
+      </ol>
+      <p class="keys">키보드: WASD 또는 방향키로 이동, E 또는 스페이스로 퀴즈<br>모바일: 왼쪽 조이스틱으로 이동, 오른쪽 버튼으로 퀴즈</p>
+      <button class="primary" id="start">길 떠나기</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="quiz" hidden>
+    <div class="card" role="dialog" aria-modal="true" aria-labelledby="q-text">
+      <p class="eyebrow" id="q-stage"></p>
+      <h2 id="q-text"></h2>
+      <div class="opts" id="q-opts"></div>
+      <div class="feedback" id="q-feedback" hidden></div>
+      <div class="row">
+        <button class="primary" id="q-next" hidden>대문 열기</button>
+        <button class="ghost" id="q-close">나중에 풀기</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="ending" hidden>
+    <div class="card">
+      <p class="eyebrow">다섯 관문 통과</p>
+      <h1>보름달이 떴습니다</h1>
+      <p>이제 이 순서만 기억하면 됩니다. 말로 시키고, 모르면 묻게 하고, 기획서부터 쓰고, 하나씩 만들고, 깃허브에 저장해 배포하기. 이 게임도 그 순서대로 만들어졌어요.</p>
+      <div class="row">
+        <button class="primary" id="restart">처음부터 다시</button>
+        <button class="ghost" id="stay">달 구경 더 하기</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
