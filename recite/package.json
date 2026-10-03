@@ -1,0 +1,14 @@
+{
+  "name": "niv-recite",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NIV 성경 구절 암송을 한 단어씩 확인해 주는 웹앱",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve -l 8080 .",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
