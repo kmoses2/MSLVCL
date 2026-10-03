@@ -1,7 +1,8 @@
-// Offline support: serves the app from the cache and refreshes the cache in the
-// background, so a new version shows up on the next visit.
+// Offline support. App files come from the network when it answers quickly, so
+// updates show up right away, and from the cache when offline. Fonts never
+// change, so they are served from the cache first.
 
-const CACHE = 'niv-recite-v1';
+const CACHE = 'niv-recite-v2';
 const APP_FILES = [
   './',
   './index.html',
@@ -14,12 +15,14 @@ const APP_FILES = [
   './lib/starter.js',
   './lib/store.js',
   './lib/text.js',
+  './lib/versification.js',
   './manifest.webmanifest',
   './icons/icon.svg',
   './icons/icon-192.png',
   './icons/apple-touch-icon.png',
 ];
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
+const NETWORK_TIMEOUT = 4000;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_FILES)).then(() => self.skipWaiting()));
@@ -34,27 +37,34 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE);
+  try {
+    const response = await Promise.race([
+      // A navigation Request can't be re-fetched with options, so fetch by URL.
+      fetch(request.url, { cache: 'no-cache', credentials: 'same-origin' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), NETWORK_TIMEOUT)),
+    ]);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (await cache.match(request, { ignoreSearch: true })) ?? Response.error();
+  }
+}
+
+async function cacheFirst(request) {
+  const cache = await caches.open(CACHE);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (response.ok || response.type === 'opaque') await cache.put(request, response.clone());
+  return response;
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
-  const sameOrigin = url.origin === self.location.origin;
-  if (!sameOrigin && !FONT_HOSTS.includes(url.hostname)) return;
-
-  event.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      const cached = await cache.match(request, { ignoreSearch: sameOrigin });
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok || response.type === 'opaque') cache.put(request, response.clone());
-          return response;
-        })
-        .catch(() => cached);
-      if (cached) {
-        event.waitUntil(network);
-        return cached;
-      }
-      return network.then((response) => response ?? Response.error());
-    }),
-  );
+  if (url.origin === self.location.origin) event.respondWith(networkFirst(request));
+  else if (FONT_HOSTS.includes(url.hostname)) event.respondWith(cacheFirst(request));
 });

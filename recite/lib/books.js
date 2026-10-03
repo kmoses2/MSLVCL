@@ -2,6 +2,7 @@
 // plus a parser for references such as "John 3:16", "1 Jn 1:9" or "요 3:16".
 
 import { numberToWords, ordinalWords } from './text.js';
+import { VERSIFICATION } from './versification.js';
 
 // [English name, Korean name, Korean abbreviation, English abbreviations...]
 const BOOK_TABLE = [
@@ -80,7 +81,16 @@ const SPOKEN_ALIASES = {
   Revelation: ['revelations'],
 };
 
-export const BOOKS = BOOK_TABLE.map(([en, ko, koAbbr, ...abbr]) => ({ en, ko, koAbbr, abbr }));
+// verses[c - 1] is the number of verses in chapter c.
+export const BOOKS = BOOK_TABLE.map(([en, ko, koAbbr, ...abbr], i) => ({
+  en,
+  ko,
+  koAbbr,
+  abbr,
+  testament: i < 39 ? 'old' : 'new',
+  usfm: VERSIFICATION[i].usfm,
+  verses: VERSIFICATION[i].verses,
+}));
 
 function bookKey(name) {
   return String(name)
@@ -104,26 +114,68 @@ export function findBook(name) {
   return BOOK_INDEX.get(bookKey(name)) ?? null;
 }
 
-const REFERENCE_RE = /^\s*(.+?)\s*(\d+)\s*(?:(?:[:：.]|장)\s*(\d+)\s*절?\s*(?:[-–—~]\s*(\d+)\s*절?)?)?\s*$/u;
+// book, then "3:16", "3:16-18", "3장 16절", "3", "3장", or for one-chapter books "24", "24-25".
+const REFERENCE_RE =
+  /^\s*(.+?)\s*(\d+)\s*(?:(?:[:：.]|장)\s*(\d+)\s*절?\s*(?:[-–—~]\s*(\d+)\s*절?)?|절?\s*[-–—~]\s*(\d+)\s*절?|장|절)?\s*$/u;
 
 /**
- * Parses "John 3:16", "Proverbs 3:5-6", "요한복음 3장 16절" or "요 3:16".
+ * Parses "John 3:16", "Proverbs 3:5-6", "요한복음 3장 16절", "요 3:16" or "Jude 24".
  * Returns null when the text does not look like a reference.
  */
 export function parseReference(text) {
   const match = REFERENCE_RE.exec(String(text ?? ''));
   if (!match) return null;
-  const [, bookText, chapter, verse, verseEnd] = match;
+  const [, bookText, first, verseText, endText, rangeEnd] = match;
   const book = findBook(bookText);
-  const numbers = [chapter, verse, verseEnd].filter(Boolean).map(Number);
+  let chapter = Number(first);
+  let verse = verseText ? Number(verseText) : null;
+  let verseEnd = endText ? Number(endText) : null;
+  if (book && book.verses.length === 1 && verse == null) {
+    // Obadiah, Philemon, 2–3 John and Jude have one chapter: "Jude 24" is verse 24.
+    verse = chapter;
+    verseEnd = rangeEnd ? Number(rangeEnd) : null;
+    chapter = 1;
+  } else if (rangeEnd) {
+    return null; // chapter ranges are not supported
+  }
+  if (verseEnd === verse) verseEnd = null;
   return {
     bookText: bookText.trim(),
     book,
-    chapter: Number(chapter),
-    verse: verse ? Number(verse) : null,
-    verseEnd: verseEnd ? Number(verseEnd) : null,
-    numbers,
+    chapter,
+    verse,
+    verseEnd,
+    numbers: [chapter, verse, verseEnd].filter((n) => n != null),
   };
+}
+
+// 은/는: whether the last Hangul syllable has a final consonant.
+function topic(word) {
+  const code = word.charCodeAt(word.length - 1) - 0xac00;
+  return code >= 0 && code < 11172 && code % 28 !== 0 ? `${word}은` : `${word}는`;
+}
+
+/** Why the reference does not exist in the NIV, or "" (also "" for unknown books). */
+export function referenceProblem(text) {
+  const ref = parseReference(text);
+  if (!ref?.book) return '';
+  const { book, chapter, verse, verseEnd } = ref;
+  if (chapter < 1 || chapter > book.verses.length) return `${topic(book.ko)} ${book.verses.length}장까지 있어요.`;
+  const last = book.verses[chapter - 1];
+  if ((verse != null && (verse < 1 || verse > last)) || (verseEnd != null && verseEnd > last)) {
+    return `${book.ko} ${chapter}장은 ${last}절까지 있어요.`;
+  }
+  if (verseEnd != null && verseEnd < verse) return '끝 절이 시작 절보다 앞에 있어요.';
+  return '';
+}
+
+/** Link that opens the passage in the NIV on bible.com (or the Bible app), or "". */
+export function bibleComUrl(text) {
+  const ref = parseReference(text);
+  if (!ref?.book || referenceProblem(text)) return '';
+  let passage = `${ref.book.usfm}.${ref.chapter}`;
+  if (ref.verse != null) passage += `.${ref.verse}${ref.verseEnd != null ? `-${ref.verseEnd}` : ''}`;
+  return `https://www.bible.com/bible/111/${passage}.NIV`;
 }
 
 function formatNumbers(ref) {
