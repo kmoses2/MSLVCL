@@ -3,7 +3,7 @@
 
 import { buildView, compareRecitation, summarize } from './lib/compare.js';
 import { countWords, firstLetters, tokenize } from './lib/text.js';
-import { formatReference, koreanReference, parseReference } from './lib/books.js';
+import { bibleComUrl, BOOKS, formatReference, koreanReference, parseReference, referenceProblem } from './lib/books.js';
 import { cleanPastedVerse } from './lib/cleanup.js';
 import { createListener, isSpeechSupported } from './lib/speech.js';
 import { NIV_NOTICE } from './lib/starter.js';
@@ -55,6 +55,8 @@ const ICONS = {
   keyboard: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7.5 14h9"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
   retry: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  external: '<path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  clipboard: '<rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H6.5A1.5 1.5 0 0 0 5 6.5v13A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17.5 5H16"/>',
 };
 
 function icon(name, extra = '') {
@@ -743,12 +745,158 @@ function historyList(verseId) {
 
 // --- Add / edit a verse ---
 
+// What the user typed into "new verse" survives a trip to the Bible app, even
+// if the browser reloads this page meanwhile.
+const DRAFT_KEY = 'niv-recite/draft';
+const DRAFT_MAX_AGE = 6 * 60 * 60 * 1000;
+
+function loadDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? 'null');
+    if (draft && Date.now() - draft.at < DRAFT_MAX_AGE) return draft;
+  } catch {
+    // no usable draft
+  }
+  return null;
+}
+
+function saveDraft(fields) {
+  try {
+    if (fields.ref || fields.text || fields.tag) localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...fields, at: Date.now() }));
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // the draft just isn't kept
+  }
+}
+
+function clearDraft() {
+  try {
+    localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // nothing to clear
+  }
+}
+
+function numberOptions(from, to, suffix) {
+  return Array.from({ length: to - from + 1 }, (_, k) => h('option', { value: String(from + k) }, `${from + k}${suffix}`));
+}
+
+/** Book, chapter and verse lists covering the whole Bible. Calls onPick(reference). */
+function versePicker(onPick) {
+  const bookSelect = h(
+    'select',
+    { id: 'pick-book' },
+    h('option', { value: '' }, '성경 66권에서 고르기'),
+    [
+      ['구약', 'old'],
+      ['신약', 'new'],
+    ].map(([label, testament]) =>
+      h('optgroup', { label }, BOOKS.filter((b) => b.testament === testament).map((b) => h('option', { value: b.usfm }, `${b.ko} · ${b.en}`))),
+    ),
+  );
+  const chapterSelect = h('select', { id: 'pick-chapter', disabled: true });
+  const verseSelect = h('select', { id: 'pick-verse', disabled: true });
+  const endSelect = h('select', { id: 'pick-verse-end', disabled: true });
+  const book = () => BOOKS.find((b) => b.usfm === bookSelect.value) ?? null;
+
+  // verse 0 means the whole chapter.
+  const fillVerses = (verse, end) => {
+    const last = book().verses[Number(chapterSelect.value) - 1];
+    verseSelect.replaceChildren(h('option', { value: '0' }, '장 전체'), ...numberOptions(1, last, '절'));
+    verseSelect.value = String(Math.min(verse, last));
+    verseSelect.disabled = false;
+    const start = Number(verseSelect.value);
+    if (start === 0) {
+      endSelect.replaceChildren(h('option', { value: '0' }, '—'));
+      endSelect.disabled = true;
+      return;
+    }
+    endSelect.replaceChildren(...numberOptions(start, last, '절'));
+    endSelect.value = String(Math.min(Math.max(end, start), last));
+    endSelect.disabled = false;
+  };
+
+  const emit = () => {
+    const b = book();
+    if (!b) return;
+    const chapter = Number(chapterSelect.value);
+    const verse = Number(verseSelect.value);
+    const end = Number(endSelect.value);
+    let ref;
+    if (verse === 0) ref = b.verses.length === 1 ? `${b.en} 1:1-${b.verses[0]}` : `${b.en} ${chapter}`;
+    else ref = `${b.en} ${chapter}:${verse}${end > verse ? `-${end}` : ''}`;
+    onPick(formatReference(ref));
+  };
+
+  bookSelect.addEventListener('change', () => {
+    const b = book();
+    if (!b) {
+      for (const select of [chapterSelect, verseSelect, endSelect]) {
+        select.replaceChildren();
+        select.disabled = true;
+      }
+      return;
+    }
+    chapterSelect.replaceChildren(...numberOptions(1, b.verses.length, '장'));
+    chapterSelect.disabled = false;
+    fillVerses(1, 1);
+    emit();
+  });
+  chapterSelect.addEventListener('change', () => {
+    fillVerses(1, 1);
+    emit();
+  });
+  verseSelect.addEventListener('change', () => {
+    const verse = Number(verseSelect.value);
+    fillVerses(verse, verse);
+    emit();
+  });
+  endSelect.addEventListener('change', emit);
+
+  /** Shows a typed or saved reference in the lists. */
+  const show = (text) => {
+    const ref = parseReference(text);
+    if (!ref?.book || referenceProblem(text)) return;
+    bookSelect.value = ref.book.usfm;
+    chapterSelect.replaceChildren(...numberOptions(1, ref.book.verses.length, '장'));
+    chapterSelect.value = String(ref.chapter);
+    chapterSelect.disabled = false;
+    fillVerses(ref.verse ?? 0, ref.verseEnd ?? ref.verse ?? 0);
+  };
+
+  const element = h(
+    'div',
+    { class: 'picker' },
+    h('label', { for: 'pick-book', class: 'sr-only' }, '책'),
+    bookSelect,
+    h(
+      'div',
+      { class: 'picker-row' },
+      h('label', { for: 'pick-chapter', class: 'sr-only' }, '장'),
+      chapterSelect,
+      h('label', { for: 'pick-verse', class: 'sr-only' }, '시작 절'),
+      verseSelect,
+      h('span', { class: 'tilde', 'aria-hidden': 'true' }, '~'),
+      h('label', { for: 'pick-verse-end', class: 'sr-only' }, '끝 절'),
+      endSelect,
+    ),
+  );
+  return { element, show };
+}
+
+function stepTitle(id, number, ...label) {
+  return h('h2', { id, class: 'step-title' }, h('span', { class: 'step-no', 'aria-hidden': 'true' }, number), ...label);
+}
+
 function renderEditor(id) {
   const verse = id ? store.getVerse(state, id) : null;
   if (id && !verse) {
     renderNotFound();
     return;
   }
+  const draft = verse ? null : loadDraft();
+  const start = verse ?? draft ?? {};
+
   const refInput = h('input', {
     id: 'verse-ref',
     type: 'text',
@@ -756,51 +904,132 @@ function renderEditor(id) {
     autocorrect: 'off',
     spellcheck: 'false',
     placeholder: '예: John 3:16 또는 요 3:16',
-    value: verse?.ref ?? '',
+    value: start.ref ?? '',
   });
   const refHint = h('p', { class: 'field-hint', id: 'verse-ref-hint' });
+  const openLink = h('a', { class: 'btn ghost', id: 'open-niv', target: '_blank', rel: 'noopener', hidden: true }, 'NIV 본문 열기', icon('external'));
   const textInput = h('textarea', {
     id: 'verse-text',
     class: 'verse-input',
     rows: '7',
     spellcheck: 'false',
     autocorrect: 'off',
-    placeholder: '성경 앱이나 웹사이트에서 NIV 본문을 복사해 붙여넣으세요.',
-    value: verse?.text ?? '',
+    placeholder: '여기에 NIV 본문을 붙여넣으세요.',
+    value: start.text ?? '',
   });
+  const pasteWarning = h('p', { class: 'field-warn', role: 'status', hidden: true });
   const textHint = h('p', { class: 'field-hint', id: 'verse-text-hint' });
-  const tagInput = h('input', { id: 'verse-tag', type: 'text', maxlength: '24', placeholder: '예: 구원의 확신', value: verse?.tag ?? '' });
+  const tagInput = h('input', {
+    id: 'verse-tag',
+    type: 'text',
+    maxlength: '24',
+    placeholder: '예: 구원의 확신',
+    'aria-labelledby': 'step-3',
+    value: start.tag ?? '',
+  });
   const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+  let pastedRef = '';
 
   const refreshHints = () => {
     const ref = refInput.value.trim();
-    const parsed = parseReference(ref);
-    if (parsed?.book) refHint.textContent = `${formatReference(ref)} · ${koreanReference(ref)}`;
-    else refHint.textContent = ref ? '책 이름을 알아보지 못했어요. 적은 그대로 저장돼요.' : '영어나 한글 약어로 적어도 돼요.';
+    const problem = referenceProblem(ref);
+    refHint.classList.toggle('is-error', Boolean(problem));
+    if (problem) refHint.textContent = problem;
+    else if (parseReference(ref)?.book) refHint.textContent = `${formatReference(ref)} · ${koreanReference(ref)}`;
+    else refHint.textContent = ref ? '책 이름을 알아보지 못했어요. 적은 그대로 저장돼요.' : '위에서 고르거나 직접 적어도 돼요.';
+
+    const url = bibleComUrl(ref);
+    openLink.hidden = !url;
+    if (url) openLink.href = url;
+
     const words = countWords(textInput.value);
     textHint.textContent = words
       ? `${words}단어 · 한 단어씩 채점하니 본문이 정확한지 꼭 확인해 주세요.`
       : '붙여넣으면 절 번호, 각주 표시([a]), 링크는 자동으로 지워져요.';
+    if (!words) pastedRef = '';
+    const mismatch = pastedRef && pastedRef !== formatReference(ref);
+    pasteWarning.hidden = !mismatch;
+    if (mismatch) pasteWarning.textContent = `붙여넣은 본문은 ${pastedRef}이라고 되어 있어요. 장절이 맞는지 확인해 주세요.`;
+
+    if (!verse) saveDraft({ ref: refInput.value, text: textInput.value, tag: tagInput.value });
   };
-  refInput.addEventListener('input', refreshHints);
+
+  const picker = versePicker((ref) => {
+    refInput.value = ref;
+    refreshHints();
+  });
+
+  const insertPasted = (raw, replaceAll) => {
+    const { text, reference } = cleanPastedVerse(raw);
+    if (replaceAll) textInput.value = text;
+    else textInput.setRangeText(text, textInput.selectionStart, textInput.selectionEnd, 'end');
+    if (reference) {
+      if (!refInput.value.trim()) {
+        refInput.value = reference;
+        picker.show(reference);
+      }
+      pastedRef = reference;
+    }
+    refreshHints();
+  };
+
+  const pasteButton = h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn ghost',
+      onclick: async () => {
+        try {
+          const copied = await navigator.clipboard.readText();
+          if (!copied.trim()) {
+            toast('복사된 내용이 없어요. 성경 앱에서 구절을 먼저 복사해 주세요.');
+            return;
+          }
+          insertPasted(copied, true);
+        } catch {
+          toast('본문 칸을 길게 눌러서 붙여넣어 주세요.');
+          textInput.focus();
+        }
+      },
+    },
+    icon('clipboard'),
+    '붙여넣기',
+  );
+
+  refInput.addEventListener('input', () => {
+    picker.show(refInput.value);
+    refreshHints();
+  });
   textInput.addEventListener('input', refreshHints);
+  tagInput.addEventListener('input', refreshHints);
   textInput.addEventListener('paste', (event) => {
     const pasted = event.clipboardData?.getData('text/plain');
     if (!pasted) return;
     event.preventDefault();
-    const { text, reference } = cleanPastedVerse(pasted);
-    textInput.setRangeText(text, textInput.selectionStart, textInput.selectionEnd, 'end');
-    if (reference && !refInput.value.trim()) refInput.value = reference;
-    refreshHints();
+    insertPasted(pasted, false);
   });
+  picker.show(refInput.value);
   refreshHints();
 
   const form = h(
     'form',
     { class: 'editor', novalidate: true },
-    h('div', { class: 'field' }, h('label', { for: 'verse-ref' }, '장절'), refInput, refHint),
-    h('div', { class: 'field' }, h('label', { for: 'verse-text' }, 'NIV 본문'), textInput, textHint),
-    h('div', { class: 'field' }, h('label', { for: 'verse-tag' }, '주제 ', h('span', { class: 'optional' }, '선택')), tagInput),
+    h(
+      'section',
+      { class: 'step', 'aria-labelledby': 'step-1' },
+      stepTitle('step-1', '1', '구절 고르기'),
+      picker.element,
+      h('div', { class: 'field' }, h('label', { for: 'verse-ref' }, '장절'), refInput, refHint),
+    ),
+    h(
+      'section',
+      { class: 'step', 'aria-labelledby': 'step-2' },
+      stepTitle('step-2', '2', h('span', { class: 'latin' }, 'NIV'), ' 본문 가져오기'),
+      h('p', { class: 'field-hint' }, '‘NIV 본문 열기’를 누르면 성경 앱(YouVersion)이나 bible.com에서 그 구절이 NIV로 열려요. 구절을 길게 눌러 복사한 뒤 돌아와서 ‘붙여넣기’를 누르세요.'),
+      h('div', { class: 'row' }, openLink, pasteButton),
+      h('div', { class: 'field' }, h('label', { for: 'verse-text' }, 'NIV 본문'), textInput, pasteWarning, textHint),
+    ),
+    h('section', { class: 'step', 'aria-labelledby': 'step-3' }, stepTitle('step-3', '3', '주제 ', h('span', { class: 'optional' }, '선택')), tagInput),
     error,
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn primary' }, '저장')),
   );
@@ -808,11 +1037,12 @@ function renderEditor(id) {
     event.preventDefault();
     const ref = refInput.value.trim();
     const text = textInput.value.replace(/\s+/g, ' ').trim();
+    const problem = referenceProblem(ref);
     error.hidden = true;
-    if (!ref || !countWords(text)) {
-      error.textContent = !ref ? '장절을 적어 주세요.' : 'NIV 본문을 붙여넣어 주세요.';
+    if (!ref || problem || !countWords(text)) {
+      error.textContent = !ref ? '구절을 골라 주세요.' : problem ? `장절을 확인해 주세요. ${problem}` : 'NIV 본문을 붙여넣어 주세요.';
       error.hidden = false;
-      (!ref ? refInput : textInput).focus();
+      (!ref || problem ? refInput : textInput).focus();
       return;
     }
     const saved = store.upsertVerse(state, {
@@ -822,6 +1052,7 @@ function renderEditor(id) {
       tag: tagInput.value.trim(),
     });
     commit(saved.state);
+    if (!verse) clearDraft();
     toast('저장했어요');
     go(`#/v/${saved.id}`);
   });
@@ -830,7 +1061,7 @@ function renderEditor(id) {
     h('nav', { class: 'bar' }, h('a', { class: 'back', href: verse ? `#/v/${verse.id}` : '#/' }, icon('back'), verse ? '구절' : '목록')),
     h('h1', { class: 'page-title' }, verse ? '구절 편집' : '새 구절'),
     form,
-    verse ? deleteControl(verse) : h('p', { class: 'fine' }, 'NIV 본문은 YouVersion(성경 앱)이나 BibleGateway에서 번역본을 NIV로 고른 뒤 복사하면 돼요.'),
+    verse ? deleteControl(verse) : h('p', { class: 'fine' }, 'NIV 전체 본문은 저작권 때문에 앱에 넣을 수 없어서, 고른 구절을 성경 앱에서 가져오도록 했어요.'),
   );
 }
 
@@ -932,6 +1163,18 @@ function renderSettings() {
         h('li', {}, '음성으로 할 때는 소리가 같은 단어(Son ↔ sun)를 맞게 처리해요. 마이크로는 구별할 수 없으니까요.'),
         h('li', {}, '장절(John 3:16)을 앞뒤에 말해도 채점에서 빠져요.'),
         h('li', {}, `최근 ${store.MASTERY_STREAK}번을 연속으로 100% 맞히면 ‘암송 완료’가 돼요.`),
+      ),
+    ),
+    h(
+      'section',
+      { class: 'section prose' },
+      h('h2', {}, '구절 추가하기'),
+      h(
+        'ul',
+        {},
+        h('li', {}, '‘새 구절 추가’에서 성경 66권 중 책, 장, 절을 고르세요. 여러 절이나 장 전체도 고를 수 있어요.'),
+        h('li', {}, '‘NIV 본문 열기’를 누르면 성경 앱(YouVersion)이나 bible.com에서 그 구절이 NIV로 열려요. 길게 눌러 복사한 뒤 돌아와 ‘붙여넣기’를 누르세요.'),
+        h('li', {}, 'NIV 전체 본문은 Biblica의 저작물이라 앱 안에 넣어 둘 수 없어서 이렇게 가져와요.'),
       ),
     ),
     h(
