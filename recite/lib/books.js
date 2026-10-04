@@ -169,13 +169,19 @@ export function referenceProblem(text) {
   return '';
 }
 
-/** Link that opens the passage in the NIV on bible.com (or the Bible app), or "". */
-export function bibleComUrl(text) {
+/** USFM passage id such as "JHN.3.16-17" or "PSA.23", or "" for an unknown or impossible reference. */
+export function passageId(text) {
   const ref = parseReference(text);
   if (!ref?.book || referenceProblem(text)) return '';
-  let passage = `${ref.book.usfm}.${ref.chapter}`;
-  if (ref.verse != null) passage += `.${ref.verse}${ref.verseEnd != null ? `-${ref.verseEnd}` : ''}`;
-  return `https://www.bible.com/bible/111/${passage}.NIV`;
+  let id = `${ref.book.usfm}.${ref.chapter}`;
+  if (ref.verse != null) id += `.${ref.verse}${ref.verseEnd != null ? `-${ref.verseEnd}` : ''}`;
+  return id;
+}
+
+/** Link that opens the passage in the NIV on bible.com (or the Bible app), or "". */
+export function bibleComUrl(text) {
+  const id = passageId(text);
+  return id ? `https://www.bible.com/bible/111/${id}.NIV` : '';
 }
 
 function formatNumbers(ref) {

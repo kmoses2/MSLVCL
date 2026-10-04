@@ -3,11 +3,12 @@
 
 import { buildView, compareRecitation, summarize } from './lib/compare.js';
 import { countWords, firstLetters, tokenize } from './lib/text.js';
-import { bibleComUrl, BOOKS, formatReference, koreanReference, parseReference, referenceProblem } from './lib/books.js';
+import { bibleComUrl, BOOKS, formatReference, koreanReference, parseReference, passageId, referenceProblem } from './lib/books.js';
 import { cleanPastedVerse } from './lib/cleanup.js';
 import { createListener, isSpeechSupported } from './lib/speech.js';
 import { NIV_NOTICE } from './lib/starter.js';
 import * as store from './lib/store.js';
+import { fetchNivPassage } from './lib/youversion.js';
 
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
@@ -777,6 +778,21 @@ function clearDraft() {
   }
 }
 
+const FETCH_ERRORS = {
+  key: 'YouVersion 앱 키가 맞지 않아요. 설정에서 키를 다시 붙여넣어 주세요.',
+  license: '이 앱 키로는 NIV를 가져올 수 없어요. YouVersion 개발자 사이트에서 이 앱에 NIV 사용을 신청해 주세요.',
+  'not-found': 'YouVersion에서 이 구절을 찾지 못했어요.',
+  network: 'YouVersion에 연결하지 못했어요. 인터넷 연결을 확인해 주세요. 인터넷이 되는데도 계속 이러면 알려 주세요.',
+};
+
+function fetchErrorMessage(err) {
+  return FETCH_ERRORS[err?.code] ?? `YouVersion에서 본문을 가져오지 못했어요${err?.status ? ` (오류 ${err.status})` : ''}. 잠시 뒤 다시 해 보세요.`;
+}
+
+function youversionKey() {
+  return String(state.settings.youversionKey ?? '').trim();
+}
+
 function numberOptions(from, to, suffix) {
   return Array.from({ length: to - from + 1 }, (_, k) => h('option', { value: String(from + k) }, `${from + k}${suffix}`));
 }
@@ -928,7 +944,12 @@ function renderEditor(id) {
     value: start.tag ?? '',
   });
   const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+  const appKey = youversionKey();
+  const fetchStatus = h('p', { class: 'field-hint', id: 'fetch-status', role: 'status', hidden: true });
   let pastedRef = '';
+  let autoText = ''; // text filled in from YouVersion; a new pick may replace it
+  let fetchController = null;
+  let fetchTimer = 0;
 
   const refreshHints = () => {
     const ref = refInput.value.trim();
@@ -954,9 +975,51 @@ function renderEditor(id) {
     if (!verse) saveDraft({ ref: refInput.value, text: textInput.value, tag: tagInput.value });
   };
 
+  const showFetchStatus = (message, kind) => {
+    fetchStatus.textContent = message;
+    fetchStatus.className = `field-hint is-${kind}`;
+    fetchStatus.hidden = false;
+  };
+
+  // Fills in the NIV text for the chosen reference. Text the user typed or
+  // pasted is only replaced when they ask for it (force).
+  const fetchText = async ({ force = false } = {}) => {
+    clearTimeout(fetchTimer);
+    if (!appKey) return;
+    const ref = refInput.value.trim();
+    const id = passageId(ref);
+    if (!id) {
+      if (force) showFetchStatus('먼저 구절을 골라 주세요.', 'error');
+      return;
+    }
+    const current = textInput.value.trim();
+    if (!force && current && current !== autoText) return;
+    fetchController?.abort();
+    const controller = new AbortController();
+    fetchController = controller;
+    showFetchStatus(`${formatReference(ref)} 본문을 YouVersion에서 가져오는 중…`, 'busy');
+    try {
+      const { text } = await fetchNivPassage(appKey, id, { signal: controller.signal });
+      if (fetchController !== controller) return;
+      textInput.value = text;
+      autoText = text;
+      pastedRef = '';
+      showFetchStatus(`YouVersion에서 ${formatReference(ref)} 본문을 가져왔어요. 확인하고 저장하세요.`, 'ok');
+      refreshHints();
+    } catch (err) {
+      if (err?.name === 'AbortError' || fetchController !== controller) return;
+      showFetchStatus(fetchErrorMessage(err), 'error');
+    }
+  };
+  const scheduleFetch = () => {
+    clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchText, 600);
+  };
+
   const picker = versePicker((ref) => {
     refInput.value = ref;
     refreshHints();
+    scheduleFetch();
   });
 
   const insertPasted = (raw, replaceAll) => {
@@ -999,6 +1062,7 @@ function renderEditor(id) {
   refInput.addEventListener('input', () => {
     picker.show(refInput.value);
     refreshHints();
+    scheduleFetch();
   });
   textInput.addEventListener('input', refreshHints);
   tagInput.addEventListener('input', refreshHints);
@@ -1025,9 +1089,23 @@ function renderEditor(id) {
       'section',
       { class: 'step', 'aria-labelledby': 'step-2' },
       stepTitle('step-2', '2', h('span', { class: 'latin' }, 'NIV'), ' 본문 가져오기'),
-      h('p', { class: 'field-hint' }, '‘NIV 본문 열기’를 누르면 성경 앱(YouVersion)이나 bible.com에서 그 구절이 NIV로 열려요. 구절을 길게 눌러 복사한 뒤 돌아와서 ‘붙여넣기’를 누르세요.'),
-      h('div', { class: 'row' }, openLink, pasteButton),
-      h('div', { class: 'field' }, h('label', { for: 'verse-text' }, 'NIV 본문'), textInput, pasteWarning, textHint),
+      appKey
+        ? h('p', { class: 'field-hint' }, '구절을 고르면 YouVersion에서 NIV 본문을 자동으로 가져와요. 안 되면 ‘NIV 본문 열기’로 복사해서 붙여넣을 수 있어요.')
+        : h(
+            'p',
+            { class: 'field-hint' },
+            '‘NIV 본문 열기’를 누르면 성경 앱(YouVersion)이나 bible.com에서 그 구절이 NIV로 열려요. 구절을 길게 눌러 복사한 뒤 돌아와서 ‘붙여넣기’를 누르세요. ',
+            h('a', { href: '#/settings' }, '설정'),
+            '에서 YouVersion 앱 키를 넣으면 본문이 자동으로 채워져요.',
+          ),
+      h(
+        'div',
+        { class: 'row' },
+        appKey ? h('button', { type: 'button', class: 'btn ghost', id: 'fetch-niv', onclick: () => fetchText({ force: true }) }, icon('retry'), '자동으로 가져오기') : null,
+        openLink,
+        pasteButton,
+      ),
+      h('div', { class: 'field' }, h('label', { for: 'verse-text' }, 'NIV 본문'), textInput, fetchStatus, pasteWarning, textHint),
     ),
     h('section', { class: 'step', 'aria-labelledby': 'step-3' }, stepTitle('step-3', '3', '주제 ', h('span', { class: 'optional' }, '선택')), tagInput),
     error,
@@ -1117,6 +1195,64 @@ function deleteControl(verse) {
 
 // --- Settings and help ---
 
+function youversionSettings() {
+  const keyInput = h('input', {
+    id: 'yv-key',
+    type: 'text',
+    autocomplete: 'off',
+    autocorrect: 'off',
+    autocapitalize: 'off',
+    spellcheck: 'false',
+    placeholder: 'YouVersion 앱 키 붙여넣기',
+    value: youversionKey(),
+  });
+  const status = h('p', { class: 'field-hint', id: 'yv-key-status', role: 'status' });
+  const saveKey = () => commit(store.setSetting(state, 'youversionKey', keyInput.value.trim()));
+  keyInput.addEventListener('change', () => {
+    saveKey();
+    status.className = 'field-hint';
+    status.textContent = keyInput.value.trim() ? '저장했어요. ‘연결 확인’을 눌러 보세요.' : '키를 지웠어요. 본문은 직접 붙여넣어야 해요.';
+  });
+  const test = async () => {
+    saveKey();
+    const key = youversionKey();
+    if (!key) {
+      status.className = 'field-hint is-error';
+      status.textContent = '앱 키를 먼저 붙여넣어 주세요.';
+      return;
+    }
+    status.className = 'field-hint is-busy';
+    status.textContent = 'John 3:16으로 확인하는 중…';
+    try {
+      const { text } = await fetchNivPassage(key, 'JHN.3.16');
+      status.className = 'field-hint is-ok';
+      status.textContent = `연결됐어요. “${text.split(' ').slice(0, 6).join(' ')}…” 이제 구절을 고르면 NIV 본문이 자동으로 채워져요.`;
+    } catch (err) {
+      status.className = 'field-hint is-error';
+      status.textContent = fetchErrorMessage(err);
+    }
+  };
+  return h(
+    'section',
+    { class: 'section prose' },
+    h('h2', {}, '본문 자동으로 가져오기'),
+    h('p', {}, 'YouVersion 앱 키를 넣으면, 구절만 고르면 NIV 본문이 자동으로 채워져요. 처음 한 번만 하면 돼요.'),
+    h(
+      'ol',
+      {},
+      h('li', {}, h('a', { href: 'https://platform.youversion.com/', target: '_blank', rel: 'noopener' }, 'platform.youversion.com'), '에 YouVersion(성경 앱) 계정으로 로그인해요.'),
+      h('li', {}, '앱을 하나 만들고(이름은 아무거나, 예: 말씀 암송) 앱 키(App Key)를 복사해요.'),
+      h('li', {}, '번역본 사용 신청이 있으면 NIV를 신청해요.'),
+      h('li', {}, '아래 칸에 붙여넣고 ‘연결 확인’을 눌러요.'),
+    ),
+    h('label', { for: 'yv-key', class: 'sr-only' }, 'YouVersion 앱 키'),
+    keyInput,
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn ghost', onclick: test }, '연결 확인')),
+    status,
+    h('p', { class: 'fine' }, '키는 이 기기에만 저장돼요. 가져온 본문은 내 암송 연습에만 써 주세요.'),
+  );
+}
+
 function renderSettings() {
   const fileInput = h('input', { id: 'backup-file', type: 'file', accept: 'application/json,.json', class: 'sr-only' });
   fileInput.addEventListener('change', async () => {
@@ -1177,6 +1313,7 @@ function renderSettings() {
         h('li', {}, 'NIV 전체 본문은 Biblica의 저작물이라 앱 안에 넣어 둘 수 없어서 이렇게 가져와요.'),
       ),
     ),
+    youversionSettings(),
     h(
       'section',
       { class: 'section prose' },
