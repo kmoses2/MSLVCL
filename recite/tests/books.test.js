@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bibleComUrl, BOOKS, findBook, formatReference, koreanReference, parseReference, referenceProblem, spokenBookWords } from '../lib/books.js';
+import { bibleComUrl, BOOKS, findBook, formatReference, koreanReference, parseReference, passageId, referenceProblem, spokenBookWords } from '../lib/books.js';
 
 test('there are 66 books with distinct names', () => {
   assert.equal(BOOKS.length, 66);
@@ -98,4 +98,12 @@ test('bibleComUrl opens the NIV passage', () => {
   assert.equal(bibleComUrl('1 John 1:9'), 'https://www.bible.com/bible/111/1JN.1.9.NIV');
   assert.equal(bibleComUrl('John 3:37'), '');
   assert.equal(bibleComUrl('My favorite'), '');
+});
+
+test('passageId gives USFM ids for valid references only', () => {
+  assert.equal(passageId('John 3:16-17'), 'JHN.3.16-17');
+  assert.equal(passageId('시 23'), 'PSA.23');
+  assert.equal(passageId('Jude 24'), 'JUD.1.24');
+  assert.equal(passageId('John 3:37'), '');
+  assert.equal(passageId(''), '');
 });
