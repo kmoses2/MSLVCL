@@ -1,12 +1,19 @@
-// Fetches NIV text from the YouVersion Platform API, which licenses Bible text
+// Fetches Bible text from the YouVersion Platform API, which licenses Bible text
 // to apps for free non-commercial use. It needs an app key from
-// platform.youversion.com with the NIV (version 111) allowed for that app.
-// Request format taken from YouVersion's own SDK (@youversion/platform-core).
+// platform.youversion.com, and each version's publisher license accepted there
+// (NIV: Biblica). Request format taken from YouVersion's own SDK
+// (@youversion/platform-core).
 
 import { cleanPastedVerse } from './cleanup.js';
 
 export const NIV_VERSION_ID = 111;
 const API = 'https://api.youversion.com/v1';
+
+// Korean versions known to be on YouVersion, used when the version list can't be read.
+export const KNOWN_KOREAN_VERSIONS = [
+  { id: 88, abbreviation: 'KRV', title: '개역한글', copyright: '' },
+  { id: 142, abbreviation: 'RNKSV', title: '새번역', copyright: '' },
+];
 
 /** code: 'key' (401), 'license' (403), 'not-found' (404), 'network', 'server'. */
 export class PassageError extends Error {
@@ -31,12 +38,7 @@ function plainText(content) {
     });
 }
 
-/**
- * Returns { text, reference } for a USFM passage id such as "JHN.3.16-17".
- * Throws PassageError; an aborted request rejects with the AbortError.
- */
-export async function fetchNivPassage(appKey, id, { signal, fetchImpl = globalThis.fetch } = {}) {
-  const url = `${API}/bibles/${NIV_VERSION_ID}/passages/${id}?format=text&include_headings=false&include_notes=false`;
+async function getJson(appKey, url, { signal, fetchImpl = globalThis.fetch } = {}) {
   let response;
   try {
     response = await fetchImpl(url, { headers: { Accept: 'application/json', 'X-YVP-App-Key': String(appKey).trim() }, signal });
@@ -49,6 +51,44 @@ export async function fetchNivPassage(appKey, id, { signal, fetchImpl = globalTh
     throw new PassageError(code, response.status);
   }
   const data = await response.json().catch(() => null);
-  if (typeof data?.content !== 'string') throw new PassageError('server', response.status);
+  if (!data || typeof data !== 'object') throw new PassageError('server', response.status);
+  return data;
+}
+
+/**
+ * Returns { text, reference } for a USFM passage id such as "JHN.3.16-17" in
+ * the given version. Throws PassageError; an aborted request rejects with the AbortError.
+ */
+export async function fetchPassage(appKey, versionId, id, options = {}) {
+  const data = await getJson(appKey, `${API}/bibles/${versionId}/passages/${id}?format=text&include_headings=false&include_notes=false`, options);
+  if (typeof data.content !== 'string') throw new PassageError('server');
   return { text: cleanPastedVerse(plainText(data.content)).text, reference: typeof data.reference === 'string' ? data.reference : '' };
+}
+
+export function fetchNivPassage(appKey, id, options = {}) {
+  return fetchPassage(appKey, NIV_VERSION_ID, id, options);
+}
+
+/** Korean Bible versions this app key may use: [{ id, abbreviation, title, copyright }]. */
+export async function listKoreanVersions(appKey, options = {}) {
+  const data = await getJson(appKey, `${API}/bibles?language_ranges[]=ko&page_size=100`, options);
+  const list = Array.isArray(data.data) ? data.data : [];
+  return list
+    .filter((v) => Number.isInteger(v?.id))
+    .map((v) => ({
+      id: v.id,
+      abbreviation: String(v.localized_abbreviation || v.abbreviation || ''),
+      title: String(v.localized_title || v.title || v.abbreviation || v.id),
+      copyright: typeof v.copyright === 'string' ? v.copyright : '',
+    }));
+}
+
+/** The version most Korean churches would expect: 개역개정, then 개역한글, then the first. */
+export function preferredKoreanVersion(versions) {
+  return (
+    versions.find((v) => /개역\s*개정/.test(v.title)) ??
+    versions.find((v) => v.id === 88 || /개역\s*한글/.test(v.title)) ??
+    versions[0] ??
+    null
+  );
 }

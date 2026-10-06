@@ -8,7 +8,7 @@ import { cleanPastedVerse } from './lib/cleanup.js';
 import { createListener, isSpeechSupported } from './lib/speech.js';
 import { NIV_NOTICE } from './lib/starter.js';
 import * as store from './lib/store.js';
-import { fetchNivPassage } from './lib/youversion.js';
+import { fetchNivPassage, fetchPassage, KNOWN_KOREAN_VERSIONS, listKoreanVersions, preferredKoreanVersion } from './lib/youversion.js';
 
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
@@ -140,10 +140,11 @@ function verseCard(verse, progress) {
   const filled = Math.min(progress.streak, store.MASTERY_STREAK);
   return h(
     'a',
-    { class: `card is-${progress.status}`, href: `#/v/${verse.id}` },
+    { class: `card is-${progress.status}`, href: `#/v/${verse.id}`, 'data-verse': verse.id },
     h('div', { class: 'card-head' }, h('span', { class: 'ref' }, verse.ref), verse.tag ? h('span', { class: 'tag' }, verse.tag) : null),
     koreanReference(verse.ref) ? h('p', { class: 'ref-ko' }, koreanReference(verse.ref)) : null,
-    h('p', { class: 'teaser', 'aria-hidden': 'true' }, firstLetters(verse.text)),
+    h('p', { class: 'card-verse', lang: 'en' }, verse.text),
+    verse.ko && showKorean() ? h('p', { class: 'card-ko', lang: 'ko' }, verse.ko) : null,
     h(
       'div',
       { class: 'card-foot' },
@@ -236,7 +237,15 @@ function paintPractice() {
   const verse = store.getVerse(state, s.verseId);
   const hint = state.settings.hint ?? 'hidden';
   const meta = verseMeta(verse);
-  const parts = [h('header', { class: 'verse-head' }, h('h1', { class: 'ref' }, verse.ref), meta ? h('p', { class: 'verse-meta' }, meta) : null)];
+  const parts = [
+    h(
+      'header',
+      { class: 'verse-head' },
+      h('h1', { class: 'ref' }, verse.ref),
+      meta ? h('p', { class: 'verse-meta' }, meta) : null,
+      verse.ko && showKorean() ? h('p', { class: 'verse-ko', lang: 'ko' }, verse.ko) : null,
+    ),
+  ];
   if (s.phase === 'result') {
     parts.push(resultView(verse));
   } else {
@@ -763,7 +772,7 @@ function loadDraft() {
 
 function saveDraft(fields) {
   try {
-    if (fields.ref || fields.text || fields.tag) localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...fields, at: Date.now() }));
+    if (fields.ref || fields.text || fields.tag || fields.ko) localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...fields, at: Date.now() }));
     else localStorage.removeItem(DRAFT_KEY);
   } catch {
     // the draft just isn't kept
@@ -789,8 +798,114 @@ function fetchErrorMessage(err) {
   return FETCH_ERRORS[err?.code] ?? `YouVersion에서 본문을 가져오지 못했어요${err?.status ? ` (오류 ${err.status})` : ''}. 잠시 뒤 다시 해 보세요.`;
 }
 
+// Korean text is shown unless it was turned off in settings.
+function showKorean() {
+  return state.settings.koreanVersionId !== -1;
+}
+
 function youversionKey() {
   return String(state.settings.youversionKey ?? '').trim();
+}
+
+// settings.koreanVersionId: undefined = not chosen yet, -1 = off, otherwise a YouVersion id.
+function koreanVersion() {
+  const id = Number(state.settings.koreanVersionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  return { id, title: state.settings.koreanVersionTitle || '', copyright: state.settings.koreanVersionCopyright || '' };
+}
+
+function koreanCopyrightText() {
+  const version = koreanVersion();
+  if (!version) return '';
+  return `한글 본문: ${version.title}${version.copyright ? ` · ${version.copyright}` : ''} (YouVersion 제공)`;
+}
+
+function setKoreanVersion(version) {
+  let next = store.setSetting(state, 'koreanVersionId', version ? version.id : -1);
+  next = store.setSetting(next, 'koreanVersionTitle', version?.title ?? '');
+  next = store.setSetting(next, 'koreanVersionCopyright', version?.copyright ?? '');
+  commit(next);
+  const line = document.getElementById('ko-copyright');
+  if (line) {
+    line.textContent = koreanCopyrightText();
+    line.hidden = !line.textContent;
+  }
+}
+
+let koreanVersions = null; // list for this app key, loaded once per visit
+let koreanProblem = null; // last PassageError while filling Korean text
+let koreanFill = null; // the running fill, shared by every caller
+
+async function loadKoreanVersions(key) {
+  if (koreanVersions) return koreanVersions;
+  try {
+    const list = await listKoreanVersions(key);
+    koreanVersions = list.length ? list : KNOWN_KOREAN_VERSIONS;
+  } catch {
+    koreanVersions = KNOWN_KOREAN_VERSIONS;
+  }
+  return koreanVersions;
+}
+
+const KOREAN_PROBLEMS = {
+  license: '한글 성경을 쓸 허락이 아직 없어요. YouVersion 사이트 › Licensing에서 한국어 성경 출판사(예: Korean Bible Society)를 체크하고 동의해 주세요.',
+};
+
+function koreanProblemMessage(err) {
+  return KOREAN_PROBLEMS[err?.code] ?? fetchErrorMessage(err);
+}
+
+// Shows a verse's new Korean text wherever it is on screen.
+function showKoreanText(verseId) {
+  const verse = store.getVerse(state, verseId);
+  const card = document.querySelector(`.card[data-verse="${CSS.escape(verseId)}"]`);
+  if (card && verse?.ko && showKorean()) {
+    let ko = card.querySelector('.card-ko');
+    if (!ko) {
+      ko = h('p', { class: 'card-ko', lang: 'ko' });
+      card.querySelector('.card-verse')?.after(ko);
+    }
+    ko.textContent = verse.ko;
+  }
+  if (session?.verseId === verseId && session.phase !== 'listening' && session.phase !== 'grading') paintPractice();
+}
+
+/** Fetches Korean text for verses that don't have it in the chosen version yet. */
+function fillKoreanTexts(onProgress) {
+  if (!koreanFill) koreanFill = runKoreanFill(onProgress).finally(() => (koreanFill = null));
+  return koreanFill;
+}
+
+async function runKoreanFill(onProgress) {
+  const key = youversionKey();
+  if (!key || state.settings.koreanVersionId === -1) return;
+  koreanProblem = null;
+  let version = koreanVersion();
+  if (!version) {
+    const pick = preferredKoreanVersion(await loadKoreanVersions(key));
+    if (!pick) return;
+    setKoreanVersion(pick);
+    version = koreanVersion();
+  }
+  const todo = store.versesNeedingKorean(state, version.id);
+  let done = 0;
+  for (const verse of todo) {
+    const id = passageId(verse.ref);
+    if (id) {
+      try {
+        const { text } = await fetchPassage(key, version.id, id);
+        commit(store.setVerseKorean(state, verse.id, text, version.id));
+        showKoreanText(verse.id);
+      } catch (err) {
+        if (err.code !== 'not-found') {
+          koreanProblem = err;
+          break;
+        }
+      }
+    }
+    done++;
+    onProgress?.(done, todo.length);
+  }
 }
 
 function numberOptions(from, to, suffix) {
@@ -943,6 +1058,20 @@ function renderEditor(id) {
     'aria-labelledby': 'step-3',
     value: start.tag ?? '',
   });
+  const koVersionNow = koreanVersion();
+  const koInput = h('textarea', {
+    id: 'verse-ko',
+    class: 'ko-input',
+    rows: '4',
+    lang: 'ko',
+    spellcheck: 'false',
+    placeholder: koVersionNow ? `${koVersionNow.title} 본문이 자동으로 채워져요. 직접 적어도 돼요.` : '한글 본문을 붙여넣거나 적어 주세요. (선택)',
+    value: start.ko ?? '',
+  });
+  const koHint = h('p', { class: 'field-hint', id: 'verse-ko-hint', role: 'status' });
+  // Korean text filled in from YouVersion; a new pick may replace it, hand edits are kept.
+  let koAuto = verse?.koVersion > 0 ? verse.ko : '';
+  let koAutoVersion = verse?.koVersion ?? 0;
   const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
   const appKey = youversionKey();
   const fetchStatus = h('p', { class: 'field-hint', id: 'fetch-status', role: 'status', hidden: true });
@@ -972,7 +1101,7 @@ function renderEditor(id) {
     pasteWarning.hidden = !mismatch;
     if (mismatch) pasteWarning.textContent = `붙여넣은 본문은 ${pastedRef}이라고 되어 있어요. 장절이 맞는지 확인해 주세요.`;
 
-    if (!verse) saveDraft({ ref: refInput.value, text: textInput.value, tag: tagInput.value });
+    if (!verse) saveDraft({ ref: refInput.value, text: textInput.value, tag: tagInput.value, ko: koInput.value });
   };
 
   const showFetchStatus = (message, kind) => {
@@ -998,6 +1127,10 @@ function renderEditor(id) {
     const controller = new AbortController();
     fetchController = controller;
     showFetchStatus(`${formatReference(ref)} 본문을 YouVersion에서 가져오는 중…`, 'busy');
+    const kv = koreanVersion();
+    const koCurrent = koInput.value.trim();
+    const wantKorean = kv && (force || !koCurrent || koCurrent === koAuto);
+    const korean = wantKorean ? fetchPassage(appKey, kv.id, id, { signal: controller.signal }).catch((err) => err) : null;
     try {
       const { text } = await fetchNivPassage(appKey, id, { signal: controller.signal });
       if (fetchController !== controller) return;
@@ -1010,6 +1143,19 @@ function renderEditor(id) {
       if (err?.name === 'AbortError' || fetchController !== controller) return;
       showFetchStatus(fetchErrorMessage(err), 'error');
     }
+    const ko = await korean;
+    if (!ko || fetchController !== controller || ko?.name === 'AbortError') return;
+    if (ko instanceof Error) {
+      koHint.className = 'field-hint is-error';
+      koHint.textContent = koreanProblemMessage(ko);
+      return;
+    }
+    koInput.value = ko.text;
+    koAuto = ko.text;
+    koAutoVersion = kv.id;
+    koHint.className = 'field-hint';
+    koHint.textContent = `${kv.title} 본문을 가져왔어요.`;
+    refreshHints();
   };
   const scheduleFetch = () => {
     clearTimeout(fetchTimer);
@@ -1066,6 +1212,7 @@ function renderEditor(id) {
   });
   textInput.addEventListener('input', refreshHints);
   tagInput.addEventListener('input', refreshHints);
+  koInput.addEventListener('input', refreshHints);
   textInput.addEventListener('paste', (event) => {
     const pasted = event.clipboardData?.getData('text/plain');
     if (!pasted) return;
@@ -1106,6 +1253,7 @@ function renderEditor(id) {
         pasteButton,
       ),
       h('div', { class: 'field' }, h('label', { for: 'verse-text' }, 'NIV 본문'), textInput, fetchStatus, pasteWarning, textHint),
+      h('div', { class: 'field' }, h('label', { for: 'verse-ko' }, '한글 본문 ', h('span', { class: 'optional' }, koVersionNow ? `선택 · ${koVersionNow.title}` : '선택')), koInput, koHint),
     ),
     h('section', { class: 'step', 'aria-labelledby': 'step-3' }, stepTitle('step-3', '3', '주제 ', h('span', { class: 'optional' }, '선택')), tagInput),
     error,
@@ -1123,11 +1271,14 @@ function renderEditor(id) {
       (!ref || problem ? refInput : textInput).focus();
       return;
     }
+    const ko = koInput.value.replace(/\s+/g, ' ').trim();
     const saved = store.upsertVerse(state, {
       id: verse?.id,
       ref: parseReference(ref)?.book ? formatReference(ref) : ref,
       text,
       tag: tagInput.value.trim(),
+      ko,
+      koVersion: ko && ko === koAuto.replace(/\s+/g, ' ').trim() ? koAutoVersion : 0,
     });
     commit(saved.state);
     if (!verse) clearDraft();
@@ -1213,12 +1364,73 @@ function youversionSettings() {
     status.className = 'field-hint';
     status.textContent = keyInput.value.trim() ? '저장했어요. ‘연결 확인’을 눌러 보세요.' : '키를 지웠어요. 본문은 직접 붙여넣어야 해요.';
   });
+  const koSelect = h('select', { id: 'ko-version' });
+  const koStatus = h('p', { class: 'field-hint', id: 'ko-status', role: 'status' });
+  const koBlock = h(
+    'div',
+    { class: 'field', hidden: !youversionKey() },
+    h('label', { for: 'ko-version' }, '한글 본문'),
+    koSelect,
+    koStatus,
+  );
+
+  const fillOptions = (versions) => {
+    const chosen = state.settings.koreanVersionId;
+    const options = [h('option', { value: '-1' }, '보여 주지 않기')];
+    for (const v of versions) options.push(h('option', { value: String(v.id) }, `${v.title}${v.abbreviation ? ` (${v.abbreviation})` : ''}`));
+    koSelect.replaceChildren(...options);
+    const current = koreanVersion();
+    if (current && !versions.some((v) => v.id === current.id)) {
+      koSelect.append(h('option', { value: String(current.id) }, current.title || String(current.id)));
+    }
+    koSelect.value = chosen === -1 ? '-1' : String(current?.id ?? preferredKoreanVersion(versions)?.id ?? -1);
+  };
+
+  const fillKorean = async () => {
+    koStatus.className = 'field-hint is-busy';
+    koStatus.textContent = '한글 본문을 가져오는 중…';
+    await fillKoreanTexts((done, total) => {
+      koStatus.textContent = `한글 본문을 가져오는 중… ${done}/${total}`;
+    });
+    if (koreanProblem) {
+      koStatus.className = 'field-hint is-error';
+      koStatus.textContent = koreanProblemMessage(koreanProblem);
+    } else if (koreanVersion()) {
+      const missing = store.versesNeedingKorean(state, koreanVersion().id).length;
+      koStatus.className = 'field-hint is-ok';
+      koStatus.textContent = missing ? `한글 본문을 넣었어요. ${missing}구절은 찾지 못했어요.` : `모든 구절에 ${koreanVersion().title} 본문이 들어갔어요.`;
+    } else {
+      koStatus.className = 'field-hint';
+      koStatus.textContent = '한글 본문을 보여 주지 않아요.';
+    }
+  };
+
+  const showKoreanOptions = async () => {
+    const key = youversionKey();
+    koBlock.hidden = !key;
+    if (!key) return;
+    fillOptions(await loadKoreanVersions(key));
+    if (!koreanVersion() && state.settings.koreanVersionId !== -1) {
+      const pick = preferredKoreanVersion(koreanVersions);
+      if (pick) setKoreanVersion(pick);
+    }
+    await fillKorean();
+  };
+
+  koSelect.addEventListener('change', () => {
+    const id = Number(koSelect.value);
+    const version = (koreanVersions ?? KNOWN_KOREAN_VERSIONS).find((v) => v.id === id) ?? null;
+    setKoreanVersion(version);
+    fillKorean();
+  });
+
   const test = async () => {
     saveKey();
     const key = youversionKey();
     if (!key) {
       status.className = 'field-hint is-error';
       status.textContent = '앱 키를 먼저 붙여넣어 주세요.';
+      koBlock.hidden = true;
       return;
     }
     status.className = 'field-hint is-busy';
@@ -1227,11 +1439,14 @@ function youversionSettings() {
       const { text } = await fetchNivPassage(key, 'JHN.3.16');
       status.className = 'field-hint is-ok';
       status.textContent = `연결됐어요. “${text.split(' ').slice(0, 6).join(' ')}…” 이제 구절을 고르면 NIV 본문이 자동으로 채워져요.`;
+      koreanVersions = null;
+      showKoreanOptions();
     } catch (err) {
       status.className = 'field-hint is-error';
       status.textContent = fetchErrorMessage(err);
     }
   };
+  if (youversionKey()) showKoreanOptions();
   return h(
     'section',
     { class: 'section prose' },
@@ -1249,6 +1464,7 @@ function youversionSettings() {
     keyInput,
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn ghost', onclick: test }, '연결 확인')),
     status,
+    koBlock,
     h('p', { class: 'fine' }, '키는 이 기기에만 저장돼요. 가져온 본문은 내 암송 연습에만 써 주세요.'),
   );
 }
@@ -1353,6 +1569,7 @@ function renderSettings() {
       { class: 'section prose' },
       h('h2', {}, '저작권'),
       h('p', { class: 'copyright' }, NIV_NOTICE),
+      h('p', { class: 'copyright', id: 'ko-copyright', hidden: !koreanCopyrightText() }, koreanCopyrightText()),
       h('p', { class: 'fine' }, 'NIV 본문은 Biblica의 저작물이에요. 직접 추가한 구절은 이 기기에만 저장되고 어디에도 올라가지 않아요.'),
     ),
   );
@@ -1362,6 +1579,7 @@ function renderSettings() {
 
 window.addEventListener('hashchange', route);
 route();
+if (youversionKey()) fillKoreanTexts();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});

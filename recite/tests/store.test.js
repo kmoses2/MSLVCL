@@ -89,3 +89,23 @@ test('restoreStarters puts deleted starter verses back', () => {
   assert.ok(store.getVerse(restored.state, 'starter-jn-3-16'));
   assert.equal(store.restoreStarters(restored.state).added, 0);
 });
+
+test('Korean text is kept and tracked by version', () => {
+  const storage = memoryStorage();
+  let state = store.createInitialState(0);
+  const added = store.upsertVerse(state, { ref: 'John 11:35', text: 'Jesus wept.', ko: '예수께서 눈물을 흘리시더라', koVersion: 0 });
+  state = store.setVerseKorean(added.state, 'starter-jn-3-16', '하나님이 세상을 이처럼 사랑하사', 88);
+  assert.ok(store.saveState(state, storage));
+  const loaded = store.loadState(storage);
+  assert.equal(store.getVerse(loaded, added.id).ko, '예수께서 눈물을 흘리시더라');
+  assert.equal(store.getVerse(loaded, 'starter-jn-3-16').koVersion, 88);
+
+  const need88 = store.versesNeedingKorean(loaded, 88).map((v) => v.id);
+  assert.ok(!need88.includes('starter-jn-3-16'), 'already has version 88');
+  assert.ok(!need88.includes(added.id), 'hand-typed Korean is kept');
+  assert.ok(need88.includes('starter-ro-8-28'), 'missing Korean is fetched');
+  assert.ok(store.versesNeedingKorean(loaded, 142).map((v) => v.id).includes('starter-jn-3-16'), 'another version replaces fetched text');
+
+  const edited = store.upsertVerse(loaded, { id: added.id, ref: 'John 11:35', text: 'Jesus wept.' });
+  assert.equal(store.getVerse(edited.state, added.id).ko, '예수께서 눈물을 흘리시더라', 'editing without ko keeps it');
+});
