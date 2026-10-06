@@ -28,6 +28,8 @@ function normalizeState(raw) {
     ref: v.ref,
     text: v.text,
     tag: typeof v.tag === 'string' ? v.tag : '',
+    ko: typeof v.ko === 'string' ? v.ko : '',
+    koVersion: Number.isInteger(v.koVersion) ? v.koVersion : 0,
     starter: Boolean(v.starter),
     createdAt: Number(v.createdAt) || 0,
     updatedAt: Number(v.updatedAt) || 0,
@@ -70,15 +72,46 @@ export function getVerse(state, id) {
   return state.verses.find((v) => v.id === id) ?? null;
 }
 
-/** Adds a verse, or updates it when `fields.id` exists. Returns { state, id }. */
+/**
+ * Adds a verse, or updates it when `fields.id` exists. Returns { state, id }.
+ * ko is the Korean text; koVersion the YouVersion id it came from (0: typed by hand).
+ */
 export function upsertVerse(state, fields, now = Date.now()) {
   const existing = fields.id ? getVerse(state, fields.id) : null;
   if (existing) {
-    const verse = { ...existing, ref: fields.ref, text: fields.text, tag: fields.tag ?? existing.tag, updatedAt: now };
+    const verse = {
+      ...existing,
+      ref: fields.ref,
+      text: fields.text,
+      tag: fields.tag ?? existing.tag,
+      ko: fields.ko ?? existing.ko ?? '',
+      koVersion: fields.koVersion ?? existing.koVersion ?? 0,
+      updatedAt: now,
+    };
     return { state: { ...state, verses: state.verses.map((v) => (v.id === verse.id ? verse : v)) }, id: verse.id };
   }
-  const verse = { id: newId(now), ref: fields.ref, text: fields.text, tag: fields.tag ?? '', starter: false, createdAt: now, updatedAt: now };
+  const verse = {
+    id: newId(now),
+    ref: fields.ref,
+    text: fields.text,
+    tag: fields.tag ?? '',
+    ko: fields.ko ?? '',
+    koVersion: fields.koVersion ?? 0,
+    starter: false,
+    createdAt: now,
+    updatedAt: now,
+  };
   return { state: { ...state, verses: [...state.verses, verse] }, id: verse.id };
+}
+
+/** Stores Korean text fetched for a verse without touching its other fields. */
+export function setVerseKorean(state, id, ko, koVersion) {
+  return { ...state, verses: state.verses.map((v) => (v.id === id ? { ...v, ko, koVersion } : v)) };
+}
+
+/** Verses whose Korean text should be (re)fetched in the given version. Hand-typed text is kept. */
+export function versesNeedingKorean(state, versionId) {
+  return state.verses.filter((v) => !(v.ko && (v.koVersion === versionId || v.koVersion === 0)));
 }
 
 export function removeVerse(state, id) {

@@ -316,15 +316,28 @@ textarea {
   font-size: var(--step--1);
 }
 
-.teaser {
+/* The verse itself on a card: English, then Korean. Very long passages are cut. */
+.card-verse {
+  display: -webkit-box;
   overflow: hidden;
-  padding-top: 0.5rem;
+  padding-top: 0.55rem;
   border-top: 1px dashed var(--rule);
-  color: var(--ink-2);
   font-family: var(--font-verse);
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  font-size: var(--step-1);
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+}
+
+.card-ko {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-family: var(--font-title);
+  font-size: var(--step-0);
+  line-height: 1.65;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
 }
 
 .card-foot {
@@ -425,6 +438,14 @@ textarea {
 .verse-meta {
   color: var(--ink-2);
   font-size: var(--step--1);
+}
+
+.verse-ko {
+  margin-top: 0.35rem;
+  color: var(--ink-2);
+  font-family: var(--font-title);
+  font-size: var(--step-0);
+  line-height: 1.7;
 }
 
 .toolbar {
@@ -630,6 +651,13 @@ select {
   border-radius: 12px;
   background: var(--card);
   font-size: max(1rem, 16px); /* smaller makes iOS zoom in on focus */
+}
+
+.ko-input {
+  font-family: var(--font-title);
+  font-size: max(1rem, 16px);
+  line-height: 1.65;
+  resize: vertical;
 }
 
 .verse-input {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchNivPassage, NIV_VERSION_ID, PassageError } from '../lib/youversion.js';
+import { fetchNivPassage, fetchPassage, KNOWN_KOREAN_VERSIONS, listKoreanVersions, NIV_VERSION_ID, PassageError, preferredKoreanVersion } from '../lib/youversion.js';
 
 function fakeFetch(status, body, calls = []) {
   return async (url, options) => {
@@ -54,4 +54,31 @@ test('errors say what went wrong', async () => {
 test('an aborted request stays an abort', async () => {
   const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
   await assert.rejects(fetchNivPassage('k', 'JHN.3.16', { fetchImpl: async () => { throw abort; } }), (err) => err === abort);
+});
+
+test('Korean versions come from the version list', async () => {
+  const calls = [];
+  const versions = await listKoreanVersions('k', {
+    fetchImpl: fakeFetch(200, {
+      data: [
+        { id: 142, abbreviation: 'RNKSV', localized_abbreviation: '새번역', title: 'Revised New Korean Standard Version', localized_title: '새번역', language_tag: 'ko' },
+        { id: 88, abbreviation: 'KRV', localized_abbreviation: 'KRV', title: 'Korean Revised Version', localized_title: '개역한글', language_tag: 'ko', copyright: '© 대한성서공회' },
+      ],
+    }, calls),
+  });
+  assert.equal(calls[0].url, 'https://api.youversion.com/v1/bibles?language_ranges[]=ko&page_size=100');
+  assert.deepEqual(versions.map((v) => [v.id, v.title]), [[142, '새번역'], [88, '개역한글']]);
+  assert.equal(preferredKoreanVersion(versions).id, 88);
+  assert.equal(preferredKoreanVersion([{ id: 5, title: '성경전서 개역개정판' }, ...versions]).id, 5);
+  assert.equal(preferredKoreanVersion([]), null);
+  assert.deepEqual(KNOWN_KOREAN_VERSIONS.map((v) => v.id), [88, 142]);
+});
+
+test('fetchPassage asks for the given version', async () => {
+  const calls = [];
+  const { text } = await fetchPassage('k', 88, 'JHN.3.16', {
+    fetchImpl: fakeFetch(200, { content: '16 하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니', reference: '요한복음 3:16' }, calls),
+  });
+  assert.match(calls[0].url, /\/bibles\/88\/passages\/JHN\.3\.16\?format=text/);
+  assert.equal(text, '하나님이 세상을 이처럼 사랑하사 독생자를 주셨으니');
 });
