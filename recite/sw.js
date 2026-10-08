@@ -2,16 +2,20 @@
 // updates show up right away, and from the cache when offline. Fonts never
 // change, so they are served from the cache first.
 
-const CACHE = 'niv-recite-v4';
+const CACHE = 'niv-recite-v5';
 const APP_FILES = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './firebase-config.js',
   './lib/assignment.js',
   './lib/books.js',
   './lib/cleanup.js',
   './lib/compare.js',
+  './lib/firebase.js',
+  './lib/group.js',
+  './lib/link.js',
   './lib/speech.js',
   './lib/starter.js',
   './lib/store.js',

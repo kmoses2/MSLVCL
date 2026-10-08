@@ -13,7 +13,27 @@ export function createInitialState(now = Date.now()) {
     verses: STARTER_VERSES.map((verse, i) => ({ ...verse, starter: true, createdAt: now + i, updatedAt: now + i })),
     attempts: {},
     assignments: [],
+    group: null,
     settings: { hint: 'hidden' },
+  };
+}
+
+/**
+ * The 함께 암송 모임 this phone is in: role 'leader' or 'member', the leader
+ * code (leaders only), which weeks' verses were already put in the list, the
+ * results last saved on the server, and a cache of the group for offline use.
+ */
+function normalizeGroup(raw) {
+  if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || !raw.id) return null;
+  return {
+    id: raw.id,
+    name: typeof raw.name === 'string' ? raw.name : '',
+    role: raw.role === 'leader' ? 'leader' : 'member',
+    code: typeof raw.code === 'string' ? raw.code : '',
+    joinedAt: Number(raw.joinedAt) || 0,
+    added: Array.isArray(raw.added) ? raw.added.filter((start) => typeof start === 'string') : [],
+    uploaded: raw.uploaded && typeof raw.uploaded === 'object' ? raw.uploaded : {},
+    cache: raw.cache && typeof raw.cache === 'object' ? raw.cache : null,
   };
 }
 
@@ -55,6 +75,7 @@ function normalizeState(raw) {
         receivedAt: Number(a.receivedAt) || 0,
       }))
     : [];
+  state.group = normalizeGroup(raw.group);
   if (raw.settings && typeof raw.settings === 'object') state.settings = { ...state.settings, ...raw.settings };
   return state;
 }
@@ -177,6 +198,14 @@ export function updateAttempt(state, verseId, at, patch) {
   return { ...state, attempts: { ...state.attempts, [verseId]: list } };
 }
 
+export function setGroup(state, group) {
+  return { ...state, group: normalizeGroup(group) };
+}
+
+export function updateGroup(state, patch) {
+  return state.group ? { ...state, group: { ...state.group, ...patch } } : state;
+}
+
 export function setSetting(state, key, value) {
   return { ...state, settings: { ...state.settings, [key]: value } };
 }
@@ -207,8 +236,10 @@ export function restoreStarters(state, now = Date.now()) {
   return { state: { ...state, verses: [...state.verses, ...missing] }, added: missing.length };
 }
 
+/** A backup file. Group membership belongs to this phone, so it stays out. */
 export function exportState(state, now = new Date()) {
-  return JSON.stringify({ app: 'niv-recite', exportedAt: now.toISOString(), ...state }, null, 2);
+  const { group, ...rest } = state;
+  return JSON.stringify({ app: 'niv-recite', exportedAt: now.toISOString(), ...rest }, null, 2);
 }
 
 /** Merges a backup into the current state. Throws on a file that is not a backup. */

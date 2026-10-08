@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// Security rules for 말씀 암송 groups. Paste this whole file into Firebase
+// console › Firestore Database › 규칙 (Rules) and press 게시 (Publish).
+//
+// groups/{g}                name, leaderName, createdBy, createdAt, updatedAt,
+//                           weeks: [{ start: 'YYYY-MM-DD', ref, note }]
+// groups/{g}/leaders/{uid}  proves that uid leads the group; it can only be
+//                           written with the group's leader code
+// groups/{g}/members/{uid}  name, joinedAt, results: { 'YYYY-MM-DD': { best, perfect, at } }
+// secrets/{g}               the leader code; nobody can read it
+//
+// Everyone signs in anonymously. Knowing a group's id (from its invite link)
+// lets you see and join it; only leaders change the weekly verses, and each
+// member writes only their own results.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isLeader(g) {
+      return signedIn() && exists(/databases/$(database)/documents/groups/$(g)/leaders/$(request.auth.uid));
+    }
+
+    function text(value, min, max) {
+      return value is string && value.size() >= min && value.size() <= max;
+    }
+
+    function validGroup(data) {
+      return data.keys().hasOnly(['name', 'leaderName', 'createdBy', 'createdAt', 'updatedAt', 'weeks'])
+        && text(data.name, 1, 40)
+        && text(data.leaderName, 0, 30)
+        && data.createdBy is string
+        && data.createdAt is int
+        && data.updatedAt is int
+        && data.weeks is list
+        && data.weeks.size() <= 500;
+    }
+
+    function validCode(data) {
+      return data.keys().hasOnly(['code']) && text(data.code, 10, 40);
+    }
+
+    match /groups/{g} {
+      allow read: if signedIn();
+      // A new group is written together with its secret and its first leader.
+      allow create: if signedIn()
+        && request.resource.data.createdBy == request.auth.uid
+        && validGroup(request.resource.data)
+        && existsAfter(/databases/$(database)/documents/groups/$(g)/leaders/$(request.auth.uid));
+      allow update: if isLeader(g)
+        && validGroup(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy;
+
+      match /leaders/{uid} {
+        allow get: if signedIn() && uid == request.auth.uid;
+        allow create: if signedIn() && uid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['code'])
+          && request.resource.data.code == getAfter(/databases/$(database)/documents/secrets/$(g)).data.code;
+        allow delete: if signedIn() && uid == request.auth.uid;
+      }
+
+      match /members/{uid} {
+        allow read: if signedIn();
+        allow create, update: if signedIn() && uid == request.auth.uid
+          && existsAfter(/databases/$(database)/documents/groups/$(g))
+          && request.resource.data.keys().hasOnly(['name', 'joinedAt', 'results'])
+          && text(request.resource.data.name, 1, 30)
+          && request.resource.data.joinedAt is int
+          && request.resource.data.results is map
+          && request.resource.data.results.size() <= 500;
+        allow delete: if signedIn() && (uid == request.auth.uid || isLeader(g));
+      }
+    }
+
+    match /secrets/{g} {
+      allow create: if signedIn()
+        && !exists(/databases/$(database)/documents/groups/$(g))
+        && getAfter(/databases/$(database)/documents/groups/$(g)).data.createdBy == request.auth.uid
+        && validCode(request.resource.data);
+      allow update: if isLeader(g) && validCode(request.resource.data);
+    }
+  }
+}

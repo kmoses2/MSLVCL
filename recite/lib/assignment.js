@@ -5,20 +5,10 @@
 // messages, so nothing is stored on a server.
 
 import { formatReference, koreanReference, parseReference } from './books.js';
+import { decodeLinkData, encodeLinkData } from './link.js';
 
 const LINK_VERSION = 1;
 const MAX_VERSES = 50;
-
-function toBase64Url(text) {
-  let binary = '';
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function fromBase64Url(code) {
-  const binary = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
-  return new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
-}
 
 export function newAssignmentId(now = Date.now()) {
   return `a-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -30,17 +20,12 @@ export function encodeAssignment({ id, title, due, refs, from, key }) {
   if (due) payload.d = due;
   if (from) payload.f = from;
   if (key) payload.k = key;
-  return toBase64Url(JSON.stringify(payload));
+  return encodeLinkData(payload);
 }
 
 /** Link code -> assignment, or null when the code is broken. */
 export function decodeAssignment(code) {
-  let payload;
-  try {
-    payload = JSON.parse(fromBase64Url(String(code)));
-  } catch {
-    return null;
-  }
+  const payload = decodeLinkData(code);
   if (payload?.v !== LINK_VERSION || !Array.isArray(payload.r)) return null;
   const refs = [...new Set(payload.r.map((r) => formatReference(String(r))))].filter((r) => parseReference(r)?.book).slice(0, MAX_VERSES);
   if (!refs.length) return null;
@@ -83,7 +68,7 @@ export function dueText(due) {
   return `${m}월 ${d}일`;
 }
 
-function withKorean(ref) {
+export function withKorean(ref) {
   const ko = koreanReference(ref);
   return ko ? `${ref} (${ko})` : ref;
 }
