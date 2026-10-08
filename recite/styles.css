@@ -1432,6 +1432,358 @@ textarea::placeholder {
   transform: translateX(-50%);
 }
 
+/* --- 함께 암송 모임: this week's verse on top, and who has it memorized --- */
+
+.btn.wide {
+  width: 100%;
+}
+
+.week-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem 1.1rem 1.05rem;
+  border: 1.5px solid var(--leather);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.week-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: var(--step--1);
+}
+
+.week-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--leather);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.week-group .icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.week-date {
+  flex: none;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.week-ref {
+  font-family: var(--font-verse);
+  font-size: var(--step-3);
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.week-ref.is-waiting {
+  font-family: var(--font-title);
+  font-size: var(--step-2);
+}
+
+.week-ref-ko {
+  margin-top: -0.3rem;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.week-verse {
+  padding-top: 0.55rem;
+  border-top: 1px dashed var(--rule);
+  font-family: var(--font-verse);
+  font-size: var(--step-1);
+  line-height: 1.55;
+}
+
+.week-ko {
+  color: var(--ink-2);
+  font-family: var(--font-title);
+  line-height: 1.65;
+}
+
+.week-go {
+  justify-self: start;
+}
+
+.week-problem {
+  color: var(--strike);
+}
+
+.board-strip {
+  display: grid;
+  gap: 0.4rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--rule);
+  text-decoration: none;
+}
+
+.board-count {
+  font-size: var(--step--1);
+  font-weight: 700;
+}
+
+.board-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.who {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.who.is-done {
+  background: var(--gilt-wash);
+  color: var(--gilt);
+  font-weight: 700;
+}
+
+.who .icon,
+.board-score .icon {
+  width: 1em;
+  height: 1em;
+  stroke-width: 2.6;
+}
+
+.board-wrap {
+  display: grid;
+  gap: 0.3rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--rule);
+}
+
+.board,
+.people,
+.plan {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board li,
+.people li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 44px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.board li:last-child,
+.people li:last-child,
+.plan-row:last-child {
+  border-bottom: 0;
+}
+
+.board-name small {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.board-score {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.board .is-done .board-score {
+  color: var(--gilt);
+  font-weight: 700;
+}
+
+.board .is-trying .board-score {
+  color: var(--ink);
+}
+
+.group-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--leather);
+  font-size: var(--step--1);
+  font-weight: 700;
+}
+
+.group-note .icon {
+  flex: none;
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.group-head {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.eyebrow {
+  margin-bottom: -0.7rem;
+  color: var(--leather);
+  font-size: var(--step--1);
+  font-weight: 700;
+}
+
+.join-info {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.join-week {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.join-week b {
+  font-family: var(--font-verse);
+  font-size: var(--step-1);
+}
+
+.announce {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.picked-ref {
+  padding: 0.6rem 0.85rem;
+  border-radius: 12px;
+  background: var(--bg);
+  font-family: var(--font-verse);
+  font-weight: 700;
+}
+
+.picked-ref.is-empty {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--step--1);
+  font-weight: 400;
+}
+
+.plan-row {
+  border-bottom: 1px solid var(--rule);
+}
+
+.plan summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 54px;
+  padding: 0.45rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.plan summary::-webkit-details-marker {
+  display: none;
+}
+
+.plan summary::after {
+  content: "▸";
+  color: var(--ink-2);
+  transition: transform 120ms ease;
+}
+
+.plan details[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.plan-no {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-ref {
+  display: grid;
+  font-family: var(--font-verse);
+  font-weight: 700;
+}
+
+.plan-ref small {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--step--1);
+  font-weight: 400;
+}
+
+.plan-count {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-row.is-current .plan-no,
+.plan-row.is-current .plan-count {
+  color: var(--leather);
+}
+
+.plan-row.is-upcoming .plan-ref {
+  color: var(--ink-2);
+}
+
+.plan-body {
+  display: grid;
+  gap: 0.6rem;
+  padding-bottom: 0.9rem;
+}
+
+.leader-code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--step-2);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  user-select: all;
+}
+
+.section.claim {
+  display: block;
+}
+
+.claim summary {
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.claim form {
+  margin-top: 0.8rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mic.is-live::after {
     animation: none;

@@ -140,3 +140,24 @@ test('assignments: added once, progress per verse, kept through backups', () => 
   assert.deepEqual(without.assignments[0].verseIds, ['starter-jn-3-16']);
   assert.equal(store.removeAssignment(state, 'a-1').assignments.length, 0);
 });
+
+test('group membership is kept on this phone but not in backups', () => {
+  const storage = memoryStorage();
+  let state = store.createInitialState(0);
+  assert.equal(state.group, null);
+  state = store.setGroup(state, { id: 'g1', name: '목요 암송', role: 'leader', code: 'ABCDEFGHJK', joinedAt: 5, added: ['2026-10-12', 3], uploaded: {}, cache: { weeks: [] } });
+  state = store.updateGroup(state, { added: [...state.group.added, '2026-10-19'] });
+  assert.deepEqual(state.group.added, ['2026-10-12', '2026-10-19']);
+  store.saveState(state, storage);
+  const loaded = store.loadState(storage);
+  assert.equal(loaded.group.role, 'leader');
+  assert.equal(loaded.group.code, 'ABCDEFGHJK');
+  assert.equal(store.setGroup(loaded, { id: 'g2', role: 'boss' }).group.role, 'member');
+  assert.equal(store.setGroup(loaded, null).group, null);
+  assert.equal(store.updateGroup(store.setGroup(loaded, null), { name: 'x' }).group, null);
+
+  const backup = JSON.parse(store.exportState(loaded));
+  assert.equal(backup.group, undefined);
+  const elsewhere = store.setGroup(store.createInitialState(0), { id: 'g9', name: '다른 모임' });
+  assert.equal(store.importState(elsewhere, store.exportState(loaded)).state.group.id, 'g9');
+});
