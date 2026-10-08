@@ -109,3 +109,34 @@ test('Korean text is kept and tracked by version', () => {
   const edited = store.upsertVerse(loaded, { id: added.id, ref: 'John 11:35', text: 'Jesus wept.' });
   assert.equal(store.getVerse(edited.state, added.id).ko, '예수께서 눈물을 흘리시더라', 'editing without ko keeps it');
 });
+
+test('assignments: added once, progress per verse, kept through backups', () => {
+  let state = store.createInitialState(0);
+  const assignment = { id: 'a-1', title: '10월 암송', due: '2026-10-15', from: '구모세', verseIds: ['starter-jn-3-16', 'starter-ro-8-28'], receivedAt: 1 };
+  let result = store.addAssignment(state, assignment);
+  assert.equal(result.added, true);
+  state = result.state;
+  assert.equal(store.addAssignment(state, assignment).added, false, 'same link twice adds nothing');
+
+  state = store.addAttempt(state, 'starter-ro-8-28', { at: 0, score: 100, perfect: true });
+  state = store.addAttempt(state, 'starter-jn-3-16', { at: 5, score: 100, perfect: true });
+  state = store.addAttempt(state, 'starter-ro-8-28', { at: 6, score: 80, perfect: false });
+  assert.deepEqual(
+    store.assignmentProgress(state, state.assignments[0]).map((i) => [i.ref, i.done, i.best]),
+    [
+      ['John 3:16', true, 100],
+      ['Romans 8:28', false, 80],
+    ],
+    'a recitation from before the assignment arrived does not count',
+  );
+
+  const storage = memoryStorage();
+  store.saveState(state, storage);
+  assert.equal(store.loadState(storage).assignments[0].title, '10월 암송');
+  const merged = store.importState(store.createInitialState(0), store.exportState(state));
+  assert.equal(merged.state.assignments.length, 1);
+
+  const without = store.removeVerse(state, 'starter-ro-8-28');
+  assert.deepEqual(without.assignments[0].verseIds, ['starter-jn-3-16']);
+  assert.equal(store.removeAssignment(state, 'a-1').assignments.length, 0);
+});

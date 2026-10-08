@@ -412,6 +412,215 @@ textarea {
   text-align: center;
 }
 
+.group-row {
+  justify-content: center;
+}
+
+.notice.kakao {
+  display: grid;
+  gap: 0.6rem;
+}
+
+/* Assignments a member received: title, due date, and a chip per verse. */
+.section-title {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.assignments {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.assignment {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.95rem 1.1rem;
+  border: 1.5px solid var(--leather);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.assignment.is-done {
+  border-color: var(--gilt);
+}
+
+.assignment-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.assignment-title {
+  font-family: var(--font-title);
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.due {
+  flex: none;
+  color: var(--leather);
+  font-size: var(--step--1);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.due.is-late {
+  color: var(--mark);
+}
+
+.assignment-meta {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.assignment-verses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 34px;
+  padding: 0 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  font-family: var(--font-verse);
+  font-size: var(--step--1);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.chip.is-done {
+  border-color: transparent;
+  background: var(--gilt-wash);
+  color: var(--gilt);
+}
+
+.chip .icon {
+  width: 1em;
+  height: 1em;
+  stroke-width: 2.4;
+}
+
+.assignment-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+}
+
+.assignment-count {
+  margin-right: auto;
+  font-size: var(--step--1);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.small {
+  min-height: 38px;
+  padding: 0 0.9rem;
+  font-size: var(--step--1);
+}
+
+.card-verse.is-missing {
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: var(--step--1);
+}
+
+/* Choosing verses for an assignment. */
+.verse-checks {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.verse-checks legend {
+  margin-bottom: 0.35rem;
+  padding: 0;
+  font-size: var(--step--1);
+  font-weight: 700;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 46px;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--rule);
+  cursor: pointer;
+}
+
+.check-row input {
+  flex: none;
+  width: 1.3rem;
+  height: 1.3rem;
+  accent-color: var(--leather);
+}
+
+.check-ref {
+  font-family: var(--font-verse);
+  font-weight: 700;
+}
+
+.check-ko {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.key-row {
+  align-items: flex-start;
+  border-bottom: 0;
+}
+
+.key-row span {
+  display: grid;
+  gap: 0.15rem;
+  font-weight: 700;
+}
+
+.key-row small {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 400;
+}
+
+.message-preview {
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: var(--step--1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.join-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.join-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+
 .footnote {
   color: var(--ink-2);
   font-size: var(--step--1);
@@ -643,6 +852,7 @@ textarea {
 }
 
 input[type="text"],
+input[type="date"],
 textarea,
 select {
   width: 100%;

@@ -9,11 +9,29 @@ import { createListener, isSpeechSupported } from './lib/speech.js';
 import { NIV_NOTICE } from './lib/starter.js';
 import * as store from './lib/store.js';
 import { fetchNivPassage, fetchPassage, KNOWN_KOREAN_VERSIONS, listKoreanVersions, preferredKoreanVersion } from './lib/youversion.js';
+import {
+  decodeAssignment,
+  dueLabel,
+  dueText,
+  encodeAssignment,
+  findAssignmentCode,
+  invitationMessage,
+  newAssignmentId,
+  progressMessage,
+  resultMessage,
+} from './lib/assignment.js';
 
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const speechOk = isSpeechSupported();
 const IN_APP_BROWSER = /KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\//i.test(navigator.userAgent);
+const IN_KAKAOTALK = /KAKAOTALK/i.test(navigator.userAgent);
+
+// KakaoTalk's own browser keeps a separate copy of the app's data and often
+// blocks the microphone; this asks KakaoTalk to open the page in Chrome or Safari.
+function openOutsideKakao() {
+  location.href = `kakaotalk://web/openExternal?url=${encodeURIComponent(location.href)}`;
+}
 
 let state = store.loadState();
 let saveFailed = false;
@@ -46,6 +64,11 @@ function h(tag, props, ...children) {
   return el;
 }
 
+/** Puts a screen in place; like h(), skips null and false children. */
+function show(...children) {
+  app.replaceChildren(...children.filter((child) => child != null && child !== false));
+}
+
 const ICONS = {
   mic: '<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
@@ -56,6 +79,9 @@ const ICONS = {
   keyboard: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7.5 14h9"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
   retry: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  share: '<path d="M12 15V3.5M7.5 8 12 3.5 16.5 8"/><path d="M5 12.5V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6.5"/>',
+  inbox: '<path d="M3.5 13.5h4.5l1.5 3h5l1.5-3h4.5"/><path d="M6 5h12l2.5 8.5V18a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-4.5z"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   external: '<path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   clipboard: '<rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H6.5A1.5 1.5 0 0 0 5 6.5v13A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17.5 5H16"/>',
 };
@@ -89,6 +115,9 @@ function verseMeta(verse) {
 
 const routes = [
   [/^#\/v\/([\w-]+)$/, (id) => renderPractice(id)],
+  [/^#\/join\/([A-Za-z0-9_-]+)$/, (code) => renderJoin(code)],
+  [/^#\/share$/, () => renderShare()],
+  [/^#\/receive$/, () => renderReceive()],
   [/^#\/add$/, () => renderEditor(null)],
   [/^#\/edit\/([\w-]+)$/, (id) => renderEditor(id)],
   [/^#\/settings$/, () => renderSettings()],
@@ -115,7 +144,7 @@ const STATUS_LABEL = { new: '새 구절', learning: '연습 중', mastered: '암
 function renderHome() {
   const progress = new Map(state.verses.map((v) => [v.id, store.verseProgress(state.attempts[v.id])]));
   const mastered = [...progress.values()].filter((p) => p.status === 'mastered').length;
-  app.replaceChildren(
+  show(
     h(
       'header',
       { class: 'top' },
@@ -127,23 +156,134 @@ function renderHome() {
       ),
       h('a', { class: 'icon-button', href: '#/settings', 'aria-label': '설정과 도움말' }, icon('sliders')),
     ),
+    IN_KAKAOTALK ? kakaoNotice() : null,
+    assignmentSection(),
     h('p', { class: 'tally' }, `${state.verses.length}구절 · 암송 완료 ${mastered}`),
     state.verses.length
       ? h('ol', { class: 'deck' }, state.verses.map((verse) => h('li', {}, verseCard(verse, progress.get(verse.id)))))
       : h('p', { class: 'empty' }, '아직 구절이 없어요. 외우고 싶은 NIV 구절을 추가해 보세요.'),
     h('a', { class: 'add-card', href: '#/add' }, icon('plus'), '새 구절 추가'),
+    h(
+      'div',
+      { class: 'row group-row' },
+      h('a', { class: 'btn ghost', href: '#/share' }, icon('share'), '과제 보내기'),
+      h('a', { class: 'btn ghost', href: '#/receive' }, icon('inbox'), '과제 받기'),
+    ),
     h('p', { class: 'footnote' }, 'NIV® © Biblica, Inc. · 구절과 기록은 이 기기에만 저장돼요 · ', h('a', { href: '#/settings' }, '도움말')),
   );
+}
+
+function kakaoNotice() {
+  return h(
+    'div',
+    { class: 'notice info kakao' },
+    h('p', {}, '카카오톡 안에서 열려 있어요. 여기서는 기록이 따로 저장되고 마이크가 안 될 수 있어요.'),
+    h('button', { type: 'button', class: 'btn ghost', onclick: openOutsideKakao }, 'Chrome/Safari로 열기'),
+  );
+}
+
+function myName() {
+  return String(state.settings.name ?? '').trim();
+}
+
+/** The member's name for messages, asked once. */
+function askName() {
+  if (myName()) return myName();
+  const name = (window.prompt('결과와 함께 보낼 이름을 적어 주세요.') ?? '').trim().slice(0, 30);
+  if (name) commit(store.setSetting(state, 'name', name));
+  return name;
+}
+
+/** Opens the share sheet (KakaoTalk etc.), or copies the text when there is none. */
+async function shareText(text, title = '말씀 암송') {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text });
+      return;
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('복사했어요. 단톡방에 붙여넣어 주세요.');
+  } catch {
+    toast('복사하지 못했어요. 글을 길게 눌러 복사해 주세요.');
+  }
+}
+
+function assignmentSection() {
+  const list = state.assignments ?? [];
+  if (!list.length) return null;
+  return h(
+    'section',
+    { class: 'assignments', 'aria-labelledby': 'assignments-title' },
+    h('h2', { id: 'assignments-title', class: 'section-title' }, '받은 과제'),
+    list.map(assignmentCard),
+  );
+}
+
+function assignmentCard(assignment) {
+  const items = store.assignmentProgress(state, assignment);
+  const done = items.filter((item) => item.done).length;
+  const label = dueLabel(assignment.due);
+  const meta = [assignment.from && `${assignment.from}님이 보냄`, assignment.due && `${dueText(assignment.due)}까지`].filter(Boolean).join(' · ');
+  return h(
+    'article',
+    { class: done === items.length && items.length ? 'assignment is-done' : 'assignment', 'data-assignment': assignment.id },
+    h(
+      'div',
+      { class: 'assignment-head' },
+      h('h3', { class: 'assignment-title' }, assignment.title),
+      label ? h('span', { class: label === '마감 지남' ? 'due is-late' : 'due' }, label) : null,
+    ),
+    meta ? h('p', { class: 'assignment-meta' }, meta) : null,
+    h(
+      'ul',
+      { class: 'assignment-verses' },
+      items.map((item) =>
+        h('li', {}, h('a', { class: item.done ? 'chip is-done' : 'chip', href: `#/v/${item.verseId}` }, item.done ? icon('check') : null, item.ref)),
+      ),
+    ),
+    h(
+      'div',
+      { class: 'assignment-foot' },
+      h('span', { class: 'assignment-count' }, `${done}/${items.length} 완료`),
+      h('button', { type: 'button', class: 'btn ghost small', onclick: () => sendProgress(assignment) }, icon('share'), '현황 보내기'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'link-button',
+          onclick: () => {
+            if (!window.confirm(`‘${assignment.title}’ 과제를 목록에서 지울까요? 구절과 기록은 남아요.`)) return;
+            commit(store.removeAssignment(state, assignment.id));
+            renderHome();
+          },
+        },
+        '지우기',
+      ),
+    ),
+  );
+}
+
+async function sendProgress(assignment) {
+  const name = askName();
+  if (!name) return;
+  const items = store.assignmentProgress(state, assignment);
+  await shareText(progressMessage({ name, title: assignment.title, due: assignment.due, items }), assignment.title);
 }
 
 function verseCard(verse, progress) {
   const filled = Math.min(progress.streak, store.MASTERY_STREAK);
   return h(
     'a',
-    { class: `card is-${progress.status}`, href: `#/v/${verse.id}`, 'data-verse': verse.id },
+    { class: `card is-${progress.status}`, href: verse.text ? `#/v/${verse.id}` : `#/edit/${verse.id}`, 'data-verse': verse.id },
     h('div', { class: 'card-head' }, h('span', { class: 'ref' }, verse.ref), verse.tag ? h('span', { class: 'tag' }, verse.tag) : null),
     koreanReference(verse.ref) ? h('p', { class: 'ref-ko' }, koreanReference(verse.ref)) : null,
-    h('p', { class: 'card-verse', lang: 'en' }, verse.text),
+    verse.text
+      ? h('p', { class: 'card-verse', lang: 'en' }, verse.text)
+      : h('p', { class: 'card-verse is-missing' }, '본문이 아직 없어요. 눌러서 NIV 본문을 넣어 주세요.'),
     verse.ko && showKorean() ? h('p', { class: 'card-ko', lang: 'ko' }, verse.ko) : null,
     h(
       'div',
@@ -160,7 +300,7 @@ function verseCard(verse, progress) {
 }
 
 function renderNotFound() {
-  app.replaceChildren(
+  show(
     h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록')),
     h('p', { class: 'empty' }, '이 구절을 찾을 수 없어요. 삭제되었을 수 있어요.'),
   );
@@ -202,8 +342,17 @@ function renderPractice(id) {
     renderNotFound();
     return;
   }
+  if (!verse.text.trim()) {
+    show(
+      h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록')),
+      h('h1', { class: 'page-title' }, verse.ref),
+      h('p', { class: 'notice info' }, '이 구절은 아직 NIV 본문이 없어요. 본문을 넣으면 암송할 수 있어요.'),
+      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: `#/edit/${verse.id}` }, icon('edit'), '본문 넣기')),
+    );
+    return;
+  }
   const body = h('div', { class: 'practice' });
-  app.replaceChildren(
+  show(
     h(
       'nav',
       { class: 'bar' },
@@ -375,9 +524,11 @@ function reciteArea() {
     'section',
     { class: 'recite' },
     s.error ? h('p', { class: 'notice', role: 'alert' }, s.error) : null,
-    IN_APP_BROWSER
-      ? h('p', { class: 'notice info' }, '카카오톡 같은 앱 안의 브라우저에서는 음성 인식이 안 될 수 있어요. 메뉴에서 ‘다른 브라우저로 열기’를 눌러 Safari나 Chrome으로 열어 주세요.')
-      : null,
+    IN_KAKAOTALK
+      ? kakaoNotice()
+      : IN_APP_BROWSER
+        ? h('p', { class: 'notice info' }, '앱 안의 브라우저에서는 음성 인식이 안 될 수 있어요. 메뉴에서 ‘다른 브라우저로 열기’를 눌러 Safari나 Chrome으로 열어 주세요.')
+        : null,
     h('button', { type: 'button', class: 'mic', onclick: startListening, 'aria-label': '암송 시작' }, icon('mic')),
     h('p', { class: 'mic-label' }, '눌러서 암송 시작'),
     h('p', { class: 'mic-tip' }, '영어로 또박또박 말해 주세요. 장절(John 3:16)을 앞뒤에 말해도 채점에는 들어가지 않아요.'),
@@ -639,9 +790,19 @@ function resultView(verse) {
       'div',
       { class: 'row actions' },
       h('button', { type: 'button', class: 'btn primary', onclick: retry }, icon('retry'), '다시 암송하기'),
+      h('button', { type: 'button', class: 'btn ghost', onclick: () => sendResult(verse) }, icon('share'), '결과 보내기'),
       h('a', { class: 'btn ghost', href: '#/' }, '목록으로'),
     ),
   );
+}
+
+async function sendResult(verse) {
+  const attempt = (state.attempts[verse.id] ?? []).find((a) => a.at === session?.attemptAt);
+  if (!attempt) return;
+  const name = askName();
+  if (!name) return;
+  const assignment = (state.assignments ?? []).find((a) => a.verseIds.includes(verse.id));
+  await shareText(resultMessage({ name, ref: verse.ref, assignmentTitle: assignment?.title, attempt }));
 }
 
 function streakNote(progress) {
@@ -1221,6 +1382,7 @@ function renderEditor(id) {
   });
   picker.show(refInput.value);
   refreshHints();
+  if (appKey && !textInput.value.trim() && passageId(refInput.value.trim())) fetchText();
 
   const form = h(
     'form',
@@ -1286,7 +1448,7 @@ function renderEditor(id) {
     go(`#/v/${saved.id}`);
   });
 
-  app.replaceChildren(
+  show(
     h('nav', { class: 'bar' }, h('a', { class: 'back', href: verse ? `#/v/${verse.id}` : '#/' }, icon('back'), verse ? '구절' : '목록')),
     h('h1', { class: 'page-title' }, verse ? '구절 편집' : '새 구절'),
     form,
@@ -1344,7 +1506,261 @@ function deleteControl(verse) {
   return h('div', { class: 'danger-zone' }, opener, confirmBox);
 }
 
+// --- Assignments: send, receive, join ---
+
+function isoDate(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function renderShare() {
+  const key = youversionKey();
+  const week = new Date();
+  week.setDate(week.getDate() + 7);
+  const titleInput = h('input', { id: 'share-title', type: 'text', maxlength: '60', value: `${new Date().getMonth() + 1}월 말씀 암송` });
+  const dueInput = h('input', { id: 'share-due', type: 'date', value: isoDate(week) });
+  const fromInput = h('input', { id: 'share-from', type: 'text', maxlength: '30', placeholder: '예: 구모세', value: myName() });
+  const keyInput = h('input', { id: 'share-key', type: 'checkbox', checked: Boolean(key), disabled: !key });
+  const boxes = state.verses
+    .filter((v) => parseReference(v.ref)?.book)
+    .map((v) => ({ verse: v, input: h('input', { type: 'checkbox', value: v.id, 'aria-label': v.ref }) }));
+  const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+  const output = h('section', { class: 'section', id: 'share-output', hidden: true });
+
+  const make = () => {
+    const refs = boxes.filter((b) => b.input.checked).map((b) => formatReference(b.verse.ref));
+    const title = titleInput.value.trim() || '말씀 암송 과제';
+    error.hidden = Boolean(refs.length);
+    if (!refs.length) {
+      error.textContent = '보낼 구절을 하나 이상 골라 주세요.';
+      return;
+    }
+    const from = fromInput.value.trim();
+    if (from && from !== myName()) commit(store.setSetting(state, 'name', from));
+    const code = encodeAssignment({ id: newAssignmentId(), title, due: dueInput.value, refs, from, key: keyInput.checked ? key : '' });
+    const url = `${location.origin}${location.pathname}#/join/${code}`;
+    const message = invitationMessage({ title, due: dueInput.value, refs, from, url });
+    output.replaceChildren(
+      h('h2', {}, '과제 링크가 만들어졌어요'),
+      h('p', { class: 'message-preview', id: 'share-message' }, message),
+      h(
+        'div',
+        { class: 'row' },
+        h('button', { type: 'button', class: 'btn primary', onclick: () => shareText(message, title) }, icon('share'), '카톡으로 보내기'),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn ghost',
+            onclick: () =>
+              navigator.clipboard.writeText(message).then(
+                () => toast('복사했어요. 단톡방에 붙여넣어 주세요.'),
+                () => toast('복사하지 못했어요. 글을 길게 눌러 복사해 주세요.'),
+              ),
+          },
+          '복사하기',
+        ),
+      ),
+      h('p', { class: 'fine' }, '받은 분이 링크를 누르면 이 구절들이 그분의 앱에 들어가요. 다 외우면 ‘결과 보내기’로 단톡방에 점수를 올릴 수 있어요.'),
+    );
+    output.hidden = false;
+    output.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  show(
+    h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록')),
+    h('h1', { class: 'page-title' }, '과제 보내기'),
+    h('p', { class: 'fine' }, '함께 외울 구절을 골라 링크로 보내요. 링크에는 장절만 들어가고, 본문은 받는 분 휴대폰이 YouVersion에서 가져와요.'),
+    h(
+      'form',
+      { class: 'editor', novalidate: true, onsubmit: (event) => (event.preventDefault(), make()) },
+      h('div', { class: 'field' }, h('label', { for: 'share-title' }, '과제 이름'), titleInput),
+      h('div', { class: 'field' }, h('label', { for: 'share-due' }, '마감일 ', h('span', { class: 'optional' }, '선택')), dueInput),
+      h('div', { class: 'field' }, h('label', { for: 'share-from' }, '보내는 사람'), fromInput),
+      h(
+        'fieldset',
+        { class: 'field verse-checks' },
+        h('legend', {}, '구절'),
+        boxes.length
+          ? boxes.map(({ verse, input }) =>
+              h('label', { class: 'check-row' }, input, h('span', { class: 'check-ref' }, verse.ref), h('span', { class: 'check-ko' }, koreanReference(verse.ref))),
+            )
+          : h('p', { class: 'fine' }, '먼저 ‘새 구절 추가’로 보낼 구절을 넣어 주세요.'),
+      ),
+      h(
+        'label',
+        { class: 'check-row key-row' },
+        keyInput,
+        h(
+          'span',
+          {},
+          key ? '내 YouVersion 앱 키도 함께 보내기' : 'YouVersion 앱 키가 없어요',
+          h('small', {}, key ? '받는 분이 따로 설정하지 않아도 본문이 자동으로 채워져요. 키는 이 링크를 받은 사람만 알 수 있어요.' : '설정에서 키를 넣으면 받는 분도 본문이 자동으로 채워져요.'),
+        ),
+      ),
+      error,
+      h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn primary' }, '링크 만들기')),
+    ),
+    output,
+  );
+}
+
+function renderReceive() {
+  const input = h('textarea', { id: 'receive-link', rows: '4', placeholder: '단톡방에서 받은 과제 링크를 붙여넣으세요.' });
+  const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+  const open = (text) => {
+    const code = findAssignmentCode(text);
+    if (!code || !decodeAssignment(code)) {
+      error.textContent = '과제 링크를 찾지 못했어요. 링크 전체를 복사했는지 확인해 주세요.';
+      error.hidden = false;
+      return;
+    }
+    go(`#/join/${code}`);
+  };
+  show(
+    h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록')),
+    h('h1', { class: 'page-title' }, '과제 받기'),
+    h('p', { class: 'fine' }, '단톡방에서 받은 링크를 누르면 바로 열려요. 홈 화면에 추가한 앱으로 받으려면 링크를 복사해서 여기에 붙여넣으세요.'),
+    h('label', { for: 'receive-link', class: 'sr-only' }, '과제 링크'),
+    input,
+    error,
+    h(
+      'div',
+      { class: 'row' },
+      h('button', { type: 'button', class: 'btn primary', onclick: () => open(input.value) }, '과제 열기'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn ghost',
+          onclick: async () => {
+            try {
+              const text = await navigator.clipboard.readText();
+              input.value = text;
+              open(text);
+            } catch {
+              toast('칸을 길게 눌러서 붙여넣어 주세요.');
+              input.focus();
+            }
+          },
+        },
+        icon('clipboard'),
+        '붙여넣기',
+      ),
+    ),
+  );
+}
+
+/** Adds an assignment's verses (fetching their text) and the assignment itself. */
+async function joinAssignment(assignment, onProgress) {
+  if (assignment.key && !youversionKey()) commit(store.setSetting(state, 'youversionKey', assignment.key));
+  const key = youversionKey();
+  const verseIds = [];
+  let missingText = 0;
+  let problem = null;
+  for (const [index, ref] of assignment.refs.entries()) {
+    onProgress?.(index + 1, assignment.refs.length);
+    let verse = state.verses.find((v) => formatReference(v.ref) === ref);
+    if (!verse) {
+      let text = '';
+      if (key && !problem) {
+        try {
+          text = (await fetchNivPassage(key, passageId(ref))).text;
+        } catch (err) {
+          problem = err;
+        }
+      }
+      if (!text) missingText++;
+      const added = store.upsertVerse(state, { ref, text, tag: assignment.title });
+      commit(added.state);
+      verse = store.getVerse(state, added.id);
+    }
+    verseIds.push(verse.id);
+  }
+  const record = { id: assignment.id || newAssignmentId(), title: assignment.title, due: assignment.due, from: assignment.from, verseIds, receivedAt: Date.now() };
+  commit(store.addAssignment(state, record).state);
+  fillKoreanTexts();
+  return { missingText, problem };
+}
+
+function renderJoin(code) {
+  const assignment = decodeAssignment(code);
+  const nav = h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록'));
+  if (!assignment) {
+    show(nav, h('h1', { class: 'page-title' }, '과제 받기'), h('p', { class: 'notice' }, '과제 링크가 올바르지 않아요. 보낸 분께 링크를 다시 받아 주세요.'));
+    return;
+  }
+  if (IN_KAKAOTALK) {
+    // Opening inside KakaoTalk would put the verses in KakaoTalk's own copy of the app.
+    const tried = `kakao-out:${code}`;
+    try {
+      if (!sessionStorage.getItem(tried)) {
+        sessionStorage.setItem(tried, '1');
+        openOutsideKakao();
+      }
+    } catch {
+      // storage blocked: just show the button
+    }
+  }
+  const already = (state.assignments ?? []).some((a) => assignment.id && a.id === assignment.id);
+  const status = h('p', { class: 'field-hint', role: 'status' });
+  const add = async (button) => {
+    button.disabled = true;
+    status.className = 'field-hint is-busy';
+    const { missingText, problem } = await joinAssignment(assignment, (done, total) => {
+      status.textContent = `구절을 넣는 중… ${done}/${total}`;
+    });
+    if (missingText) {
+      toast(problem ? `${fetchErrorMessage(problem)} 본문이 없는 구절은 눌러서 넣어 주세요.` : `${missingText}구절은 본문을 직접 넣어 주세요.`);
+    } else {
+      toast('과제를 받았어요');
+    }
+    go('#/');
+  };
+  const addButton = h('button', { type: 'button', class: 'btn primary', onclick: (event) => add(event.currentTarget) }, '내 목록에 추가');
+  show(
+    nav,
+    IN_KAKAOTALK ? kakaoNotice() : null,
+    h('h1', { class: 'page-title' }, assignment.title),
+    h(
+      'p',
+      { class: 'fine' },
+      [assignment.from && `${assignment.from}님이 보낸 과제예요.`, assignment.due && `${dueText(assignment.due)}까지 (${dueLabel(assignment.due)})`].filter(Boolean).join(' '),
+    ),
+    h(
+      'ul',
+      { class: 'join-list' },
+      assignment.refs.map((ref) => h('li', {}, h('span', { class: 'check-ref' }, ref), h('span', { class: 'check-ko' }, koreanReference(ref)))),
+    ),
+    already
+      ? h('p', { class: 'notice info' }, '이미 받은 과제예요. 목록에서 확인하세요.')
+      : h(
+          'p',
+          { class: 'fine' },
+          assignment.key || youversionKey() ? 'NIV 본문은 YouVersion에서 자동으로 가져와요.' : '이 링크에는 YouVersion 키가 없어서, 본문은 구절마다 직접 넣어야 해요.',
+        ),
+    h('div', { class: 'row' }, already ? h('a', { class: 'btn primary', href: '#/' }, '목록으로') : addButton),
+    status,
+  );
+}
+
 // --- Settings and help ---
+
+function nameSettings() {
+  const input = h('input', { id: 'my-name', type: 'text', maxlength: '30', placeholder: '예: 구모세', value: myName() });
+  input.addEventListener('change', () => {
+    commit(store.setSetting(state, 'name', input.value.trim()));
+    toast('이름을 저장했어요');
+  });
+  return h(
+    'section',
+    { class: 'section prose' },
+    h('h2', {}, '함께 암송하기'),
+    h('p', {}, '목록 아래 ‘과제 보내기’로 구절을 골라 단톡방에 링크를 보내면, 받은 분들 앱에 그 구절이 들어가요. 다 외우면 결과 화면의 ‘결과 보내기’로 점수를 단톡방에 올려요.'),
+    h('label', { for: 'my-name' }, '결과에 들어갈 내 이름'),
+    input,
+  );
+}
 
 function youversionSettings() {
   const keyInput = h('input', {
@@ -1500,7 +1916,7 @@ function renderSettings() {
     toast(added ? `기본 구절 ${added}개를 다시 넣었어요` : '기본 구절이 모두 있어요');
   };
 
-  app.replaceChildren(
+  show(
     h('nav', { class: 'bar' }, h('a', { class: 'back', href: '#/' }, icon('back'), '목록')),
     h('h1', { class: 'page-title' }, '설정과 도움말'),
     h(
@@ -1529,6 +1945,7 @@ function renderSettings() {
         h('li', {}, 'NIV 전체 본문은 Biblica의 저작물이라 앱 안에 넣어 둘 수 없어서 이렇게 가져와요.'),
       ),
     ),
+    nameSettings(),
     youversionSettings(),
     h(
       'section',

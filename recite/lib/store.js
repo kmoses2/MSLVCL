@@ -12,8 +12,13 @@ export function createInitialState(now = Date.now()) {
     version: 1,
     verses: STARTER_VERSES.map((verse, i) => ({ ...verse, starter: true, createdAt: now + i, updatedAt: now + i })),
     attempts: {},
+    assignments: [],
     settings: { hint: 'hidden' },
   };
+}
+
+function isAssignment(a) {
+  return a && typeof a.id === 'string' && typeof a.title === 'string' && Array.isArray(a.verseIds);
 }
 
 function isVerse(v) {
@@ -40,6 +45,16 @@ function normalizeState(raw) {
       if (Array.isArray(list)) state.attempts[id] = list.filter((a) => a && Number.isFinite(a.at) && Number.isFinite(a.score));
     }
   }
+  state.assignments = Array.isArray(raw.assignments)
+    ? raw.assignments.filter(isAssignment).map((a) => ({
+        id: a.id,
+        title: a.title,
+        due: typeof a.due === 'string' ? a.due : '',
+        from: typeof a.from === 'string' ? a.from : '',
+        verseIds: a.verseIds.filter((id) => typeof id === 'string'),
+        receivedAt: Number(a.receivedAt) || 0,
+      }))
+    : [];
   if (raw.settings && typeof raw.settings === 'object') state.settings = { ...state.settings, ...raw.settings };
   return state;
 }
@@ -117,7 +132,39 @@ export function versesNeedingKorean(state, versionId) {
 export function removeVerse(state, id) {
   const attempts = { ...state.attempts };
   delete attempts[id];
-  return { ...state, verses: state.verses.filter((v) => v.id !== id), attempts };
+  const assignments = (state.assignments ?? []).map((a) => ({ ...a, verseIds: a.verseIds.filter((v) => v !== id) }));
+  return { ...state, verses: state.verses.filter((v) => v.id !== id), attempts, assignments };
+}
+
+/** Adds an assignment unless one with the same id is already there. Returns { state, added }. */
+export function addAssignment(state, assignment) {
+  const list = state.assignments ?? [];
+  if (assignment.id && list.some((a) => a.id === assignment.id)) return { state, added: false };
+  return { state: { ...state, assignments: [assignment, ...list] }, added: true };
+}
+
+export function removeAssignment(state, id) {
+  return { ...state, assignments: (state.assignments ?? []).filter((a) => a.id !== id) };
+}
+
+/**
+ * [{ verseId, ref, done, best }]: done once a verse was recited word-perfect
+ * after the assignment arrived, so a review assignment asks for a fresh recitation.
+ */
+export function assignmentProgress(state, assignment) {
+  const since = assignment.receivedAt || 0;
+  return assignment.verseIds
+    .map((verseId) => getVerse(state, verseId))
+    .filter(Boolean)
+    .map((verse) => {
+      const attempts = (state.attempts[verse.id] ?? []).filter((a) => a.at >= since);
+      return {
+        verseId: verse.id,
+        ref: verse.ref,
+        done: attempts.some((a) => a.perfect),
+        best: attempts.reduce((max, a) => Math.max(max, a.score), 0),
+      };
+    });
 }
 
 export function addAttempt(state, verseId, attempt) {
@@ -193,5 +240,9 @@ export function importState(state, json) {
       .sort((a, b) => a.at - b.at)
       .slice(-MAX_ATTEMPTS_PER_VERSE);
   }
-  return { state: { ...state, verses, attempts }, added };
+  const assignments = [...(state.assignments ?? [])];
+  for (const assignment of incoming.assignments) {
+    if (!assignments.some((a) => a.id === assignment.id)) assignments.push(assignment);
+  }
+  return { state: { ...state, verses, attempts, assignments }, added };
 }
