@@ -4,8 +4,9 @@
   --bg: #edefea;          /* pale sage paper */
   --card: #fbfbf8;        /* card stock */
   --ink: #1b2232;         /* navy-black ink */
-  --ink-2: #596171;
-  --rule: #d5d9d2;
+  --ink-2: #474f5e;
+  --ink-ko: #2f3746;     /* Korean text under the English verse */
+  --rule: #c9cec6;
   --leather: #233459;     /* navy Bible leather: primary actions */
   --on-leather: #f6f3e8;
   --gilt: #9a6f1f;        /* gilt edge: mastery */
@@ -23,12 +24,13 @@
   --font-title: "Gowun Batang", "Nanum Myeongjo", AppleMyungjo, Batang, serif;
   --font-ui: Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
 
-  --step--1: 0.8125rem;
-  --step-0: 0.9375rem;
-  --step-1: 1.0625rem;
-  --step-2: 1.3125rem;
-  --step-3: 1.75rem;
-  --step-4: 2.25rem;
+  /* Large enough to read on a phone at arm's length while reciting. */
+  --step--1: 0.9375rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.1875rem;
+  --step-2: 1.4375rem;
+  --step-3: 1.875rem;
+  --step-4: 2.375rem;
   --radius: 14px;
   color-scheme: light;
 }
@@ -36,10 +38,11 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #12151c;
-    --card: #1a1f29;
-    --ink: #e8eaee;
-    --ink-2: #a2a9b6;
-    --rule: #2d3441;
+    --card: #1c222d;
+    --ink: #eef0f3;
+    --ink-2: #bcc3cf;
+    --ink-ko: #d6dbe3;
+    --rule: #3a4252;
     --leather: #9db1e6;
     --on-leather: #10172a;
     --gilt: #d9b062;
@@ -58,10 +61,11 @@
 
 :root[data-theme="dark"] {
   --bg: #12151c;
-  --card: #1a1f29;
-  --ink: #e8eaee;
-  --ink-2: #a2a9b6;
-  --rule: #2d3441;
+  --card: #1c222d;
+  --ink: #eef0f3;
+  --ink-2: #bcc3cf;
+  --ink-ko: #d6dbe3;
+  --rule: #3a4252;
   --leather: #9db1e6;
   --on-leather: #10172a;
   --gilt: #d9b062;
@@ -332,8 +336,8 @@ textarea {
 .card-ko {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--ink-2);
-  font-family: var(--font-title);
+  color: var(--ink-ko);
+  font-family: var(--font-ui);
   font-size: var(--step-0);
   line-height: 1.65;
   -webkit-box-orient: vertical;
@@ -455,7 +459,7 @@ textarea {
 }
 
 .assignment-title {
-  font-family: var(--font-title);
+  font-family: var(--font-ui);
   font-size: var(--step-1);
   font-weight: 700;
 }
@@ -651,8 +655,8 @@ textarea {
 
 .verse-ko {
   margin-top: 0.35rem;
-  color: var(--ink-2);
-  font-family: var(--font-title);
+  color: var(--ink-ko);
+  font-family: var(--font-ui);
   font-size: var(--step-0);
   line-height: 1.7;
 }
@@ -728,7 +732,7 @@ textarea {
   height: 1em;
   margin: 0 0.04em;
   border-bottom: 2px solid var(--rule);
-  border-bottom: 2px solid color-mix(in srgb, var(--ink-2) 40%, transparent);
+  border-bottom: 2.5px solid color-mix(in srgb, var(--ink-2) 70%, transparent);
   vertical-align: -0.1em;
 }
 
@@ -864,7 +868,7 @@ select {
 }
 
 .ko-input {
-  font-family: var(--font-title);
+  font-family: var(--font-ui);
   font-size: max(1rem, 16px);
   line-height: 1.65;
   resize: vertical;
@@ -908,7 +912,7 @@ textarea::placeholder {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  min-height: 46px;
+  min-height: 50px;
   padding: 0 1.25rem;
   border: 1px solid transparent;
   border-radius: 999px;
@@ -1326,7 +1330,7 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 0.55rem;
-  font-family: var(--font-title);
+  font-family: var(--font-ui);
   font-size: var(--step-1);
   font-weight: 700;
 }
@@ -1398,7 +1402,7 @@ textarea::placeholder {
 }
 
 .section h2 {
-  font-family: var(--font-title);
+  font-family: var(--font-ui);
   font-size: var(--step-1);
   font-weight: 700;
 }
@@ -1486,7 +1490,7 @@ textarea::placeholder {
 }
 
 .week-ref.is-waiting {
-  font-family: var(--font-title);
+  font-family: var(--font-ui);
   font-size: var(--step-2);
 }
 
@@ -1505,8 +1509,8 @@ textarea::placeholder {
 }
 
 .week-ko {
-  color: var(--ink-2);
-  font-family: var(--font-title);
+  color: var(--ink-ko);
+  font-family: var(--font-ui);
   line-height: 1.65;
 }
 
