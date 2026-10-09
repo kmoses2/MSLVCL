@@ -1788,6 +1788,141 @@ textarea::placeholder {
   margin-top: 0.8rem;
 }
 
+/* --- What to do first: the guide, the app-key nudge, quick actions --- */
+
+.guide {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.1rem 1.15rem 1.2rem;
+  border-radius: var(--radius);
+  background: var(--leather);
+  color: var(--on-leather);
+}
+
+.guide h2 {
+  font-size: var(--step-1);
+  font-weight: 700;
+}
+
+.guide-steps {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.guide-steps li {
+  display: grid;
+  grid-template-columns: 1.9rem minmax(0, 1fr);
+  column-gap: 0.7rem;
+  counter-increment: step;
+}
+
+.guide-steps li::before {
+  content: counter(step);
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 50%;
+  background: var(--on-leather);
+  color: var(--leather);
+  font-weight: 800;
+}
+
+.guide-steps b {
+  font-size: var(--step-0);
+}
+
+.guide-steps span {
+  opacity: 0.88;
+  font-size: var(--step--1);
+}
+
+.guide .btn.primary {
+  justify-self: start;
+  background: var(--on-leather);
+  color: var(--leather);
+}
+
+.nudge {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  border: 1.5px solid var(--gilt);
+  border-radius: var(--radius);
+  background: var(--gilt-wash);
+  font-size: var(--step--1);
+}
+
+.quick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.quick-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 56px;
+  padding: 0 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+
+.quick-link .icon {
+  flex: none;
+  color: var(--leather);
+}
+
+.deck-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.4rem;
+}
+
+.deck-head .section-title {
+  color: var(--ink);
+  font-size: var(--step-1);
+  letter-spacing: 0;
+}
+
+.deck-hint {
+  margin-top: -0.6rem;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.card-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  color: var(--leather);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.card-go .icon {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.more-title {
+  margin-top: 0.6rem;
+  text-align: center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mic.is-live::after {
     animation: none;
