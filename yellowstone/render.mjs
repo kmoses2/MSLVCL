@@ -1,5 +1,5 @@
 // Renders index.html to an MP4 (1920x1080) via headless Chromium + ffmpeg.
-// Usage: node render.mjs [out.mp4] [fps]
+// Usage: [PAGE=shorts.html] node render.mjs [out.mp4] [fps]
 import { createRequire } from 'module';
 import { execSync, spawn } from 'child_process';
 import { pathToFileURL } from 'url';
@@ -10,8 +10,9 @@ const out = process.argv[2] || 'yellowstone.mp4', fps = +(process.argv[3] || 30)
 const here = path.dirname(new URL(import.meta.url).pathname);
 const browser = await pw.chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-await page.goto(pathToFileURL(path.join(here, 'index.html')).href + '?render=1');
+await page.goto(pathToFileURL(path.join(here, (process.env.PAGE || 'index.html'))).href + '?render=1');
 await page.evaluate(() => document.fonts.ready);
+await page.setViewportSize(await page.evaluate(() => ({ width: window.VW || 1920, height: window.VH || 1080 })));
 const total = await page.evaluate(() => window.TOTAL);
 const ff = spawn('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', '-',
   '-c:v', 'libx264', '-preset', 'medium', '-crf', '21', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });

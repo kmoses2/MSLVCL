@@ -13,8 +13,9 @@ const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 const errs = [];
 page.on('pageerror', e => errs.push(e.message));
 await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
-await page.goto(pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), 'index.html')).href + '?render=1');
+await page.goto(pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), (process.env.PAGE || 'index.html'))).href + '?render=1');
 await page.evaluate(() => document.fonts.load('900 40px "Noto Sans KR"'));
+await page.setViewportSize(await page.evaluate(() => ({ width: window.VW || 1920, height: window.VH || 1080 })));
 for (const t of ts) {
   await page.evaluate(t => renderFrame(t), +t);
   const b64 = await page.evaluate(() => document.getElementById('c').toDataURL('image/jpeg', .8).split(',')[1]);
