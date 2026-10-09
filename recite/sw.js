@@ -2,7 +2,7 @@
 // updates show up right away, and from the cache when offline. Fonts never
 // change, so they are served from the cache first.
 
-const CACHE = 'niv-recite-v5';
+const CACHE = 'niv-recite-v6';
 const APP_FILES = [
   './',
   './index.html',
@@ -31,7 +31,9 @@ const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 const NETWORK_TIMEOUT = 4000;
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so a new version never stores old files.
+  const requests = APP_FILES.map((url) => new Request(url, { cache: 'reload' }));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(requests)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
