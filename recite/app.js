@@ -103,6 +103,7 @@ const ICONS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
   speaker: '<path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9.2a4 4 0 0 1 0 5.6M18 6.8a7.5 7.5 0 0 1 0 10.4"/>',
   back: '<path d="M14.5 5.5 8 12l6.5 6.5"/>',
+  chevron: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
   sliders: '<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   keyboard: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7.5 14h9"/>',
@@ -190,14 +191,23 @@ function renderHome() {
       h('a', { class: 'icon-button', href: '#/settings', 'aria-label': '설정과 도움말' }, icon('sliders')),
     ),
     IN_KAKAOTALK ? kakaoNotice() : null,
+    guideCard(),
+    keyNudge(),
     weekCard(),
+    quickActions(),
     assignmentSection(),
-    h('p', { class: 'tally' }, `${state.verses.length}구절 · 암송 완료 ${mastered}`),
+    h(
+      'div',
+      { class: 'deck-head' },
+      h('h2', { class: 'section-title' }, '내 구절'),
+      h('p', { class: 'tally' }, `${state.verses.length}구절 · 암송 완료 ${mastered}`),
+    ),
+    state.verses.length ? h('p', { class: 'deck-hint' }, '외울 구절을 누르면 연습이 시작돼요.') : null,
     state.verses.length
       ? h('ol', { class: 'deck' }, state.verses.map((verse) => h('li', {}, verseCard(verse, progress.get(verse.id)))))
       : h('p', { class: 'empty' }, '아직 구절이 없어요. 외우고 싶은 NIV 구절을 추가해 보세요.'),
     h('a', { class: 'add-card', href: '#/add' }, icon('plus'), '새 구절 추가'),
-    state.group || !serverReady ? null : h('a', { class: 'btn ghost wide', href: '#/group' }, icon('people'), '함께 암송 모임'),
+    h('p', { class: 'section-title more-title' }, '서버 없이 링크로 과제 주고받기'),
     h(
       'div',
       { class: 'row group-row' },
@@ -205,6 +215,74 @@ function renderHome() {
       h('a', { class: 'btn ghost', href: '#/receive' }, icon('inbox'), '과제 받기'),
     ),
     h('p', { class: 'footnote' }, 'NIV® © Biblica, Inc. · 구절과 기록은 이 기기에만 저장돼요 · ', h('a', { href: '#/settings' }, '도움말')),
+  );
+}
+
+/** First-visit steps, until dismissed (settings can show them again). */
+function guideCard() {
+  if (state.settings.guideDone) return null;
+  return h(
+    'section',
+    { class: 'guide', 'aria-labelledby': 'guide-title' },
+    h('h2', { id: 'guide-title' }, '이렇게 써요'),
+    h(
+      'ol',
+      { class: 'guide-steps' },
+      h('li', {}, h('b', {}, '구절 고르기'), h('span', {}, '아래 ‘내 구절’에서 외울 구절을 누르세요.')),
+      h('li', {}, h('b', {}, '소리 내어 외우기'), h('span', {}, '마이크 버튼을 누르고 영어로 외운 뒤, 다시 눌러 끝내요.')),
+      h('li', {}, h('b', {}, '틀린 곳 확인'), h('span', {}, '틀린 단어는 빨간색으로 보여요. 3번 연속 100%면 암송 완료!')),
+    ),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'btn primary',
+        onclick: () => {
+          commit(store.setSetting(state, 'guideDone', true));
+          renderHome();
+        },
+      },
+      '알겠어요',
+    ),
+  );
+}
+
+/** Without an app key, new verses need their text pasted by hand: say so, with the way out. */
+function keyNudge() {
+  if (youversionKey() || state.settings.keyNudgeHidden) return null;
+  return h(
+    'section',
+    { class: 'nudge' },
+    h('p', {}, h('b', {}, '본문 자동으로 가져오기가 꺼져 있어요.'), ' 켜면 새 구절의 영어·한글 본문이 저절로 채워져요.'),
+    h(
+      'div',
+      { class: 'row' },
+      h('a', { class: 'btn primary small', href: '#/settings' }, '켜러 가기'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'link-button',
+          onclick: () => {
+            commit(store.setSetting(state, 'keyNudgeHidden', true));
+            renderHome();
+          },
+        },
+        '나중에',
+      ),
+    ),
+  );
+}
+
+/** The two things to do besides practicing, up where they are seen. */
+function quickActions() {
+  return h(
+    'nav',
+    { class: 'quick', 'aria-label': '바로 가기' },
+    h('a', { class: 'quick-link', href: '#/add' }, icon('plus'), h('span', {}, '새 구절 추가')),
+    serverReady
+      ? h('a', { class: 'quick-link', href: '#/group' }, icon('people'), h('span', {}, state.group ? '우리 모임' : '함께 암송 모임'))
+      : h('a', { class: 'quick-link', href: '#/settings' }, icon('sliders'), h('span', {}, '설정과 도움말')),
   );
 }
 
@@ -330,6 +408,7 @@ function verseCard(verse, progress) {
         Array.from({ length: store.MASTERY_STREAK }, (_, i) => h('span', { class: i < filled ? 'dot on' : 'dot' })),
       ),
       h('span', { class: 'best' }, progress.count ? `최고 ${progress.best}%` : `${countWords(verse.text)}단어`),
+      h('span', { class: 'card-go', 'aria-hidden': 'true' }, verse.text ? '연습하기' : '본문 넣기', icon('chevron')),
     ),
   );
 }
@@ -2944,7 +3023,23 @@ function renderSettings() {
       { class: 'section prose' },
       h('h2', {}, '기본 구절'),
       h('p', {}, '네비게이토 5확신 구절과 많이 외우는 구절 12개가 들어 있어요. 지운 기본 구절을 다시 넣을 수 있어요.'),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn ghost', onclick: restore }, '기본 구절 다시 넣기')),
+      h(
+        'div',
+        { class: 'row' },
+        h('button', { type: 'button', class: 'btn ghost', onclick: restore }, '기본 구절 다시 넣기'),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn ghost',
+            onclick: () => {
+              commit(store.setSetting(store.setSetting(state, 'guideDone', false), 'keyNudgeHidden', false));
+              go('#/');
+            },
+          },
+          '처음 사용법 다시 보기',
+        ),
+      ),
     ),
     h(
       'section',
