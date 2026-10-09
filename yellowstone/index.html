@@ -1,0 +1,1134 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>옐로스톤 모션그래픽</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0b0b0d; --panel:#16161a; --fg:#f2efe9; --muted:#9a968e; --accent:#ff8a2a; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--bg); color:var(--fg); font-family:"Noto Sans KR",system-ui,sans-serif; }
+  main { max-width:1280px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; font-weight:700; margin:4px 0 12px; }
+  h1 small { color:var(--muted); font-weight:400; font-size:14px; margin-left:8px; }
+  .stage { position:relative; width:100%; aspect-ratio:16/9; background:#000; border-radius:10px; overflow:hidden; }
+  canvas { display:block; width:100%; height:100%; }
+  .bigplay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.35); border:0; color:#fff; font-size:64px; cursor:pointer; }
+  .bigplay[hidden] { display:none; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:10px; }
+  .controls button { background:var(--panel); color:var(--fg); border:1px solid #2a2a30; border-radius:8px; padding:8px 12px; font:inherit; font-size:14px; cursor:pointer; }
+  .controls button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); }
+  .controls input[type=range] { flex:1 1 240px; accent-color:var(--accent); }
+  .time { font-variant-numeric:tabular-nums; font-size:14px; color:var(--muted); min-width:96px; }
+  .chapters { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .chapters button { background:transparent; color:var(--muted); border:1px solid #2a2a30; border-radius:999px; padding:6px 12px; font:inherit; font-size:13px; cursor:pointer; }
+  .chapters button.on { color:#111; background:var(--accent); border-color:var(--accent); }
+  body.render main { padding:0; max-width:none; }
+  body.render h1, body.render .controls, body.render .chapters, body.render .bigplay { display:none; }
+  body.render .stage { width:1920px; height:1080px; border-radius:0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🌋 옐로스톤은 어떻게 만들어졌을까? <small>발밑에 잠든 거대한 불의 이야기 · 7분 20초</small></h1>
+  <div class="stage">
+    <canvas id="c" width="1920" height="1080"></canvas>
+    <button class="bigplay" id="bigplay" aria-label="재생">▶</button>
+  </div>
+  <div class="controls">
+    <button id="play">▶ 재생</button>
+    <span class="time" id="time">0:00 / 7:20</span>
+    <input type="range" id="seek" min="0" max="440" step="0.1" value="0" aria-label="재생 위치">
+    <button id="cc" aria-pressed="true">자막</button>
+    <button id="tts" aria-pressed="false">음성 읽기</button>
+    <button id="fs">전체화면</button>
+  </div>
+  <div class="chapters" id="chapters"></div>
+</main>
+<script>
+"use strict";
+const W = 1920, H = 1080, TOTAL = 440;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const FONT = '"Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
+
+/* ---------- helpers ---------- */
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const win = (t, a, b, f = 1) => clamp((t - a) / f) * clamp((b - t) / f);
+const R = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const TAU = Math.PI * 2;
+
+function text(str, x, y, o = {}) {
+  const { size = 40, weight = 700, color = '#fff', align = 'center', alpha = 1, base = 'middle', shadow = true } = o;
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.font = `${weight} ${size}px ${FONT}`;
+  ctx.textAlign = align; ctx.textBaseline = base;
+  if (shadow) { ctx.shadowColor = 'rgba(0,0,0,.65)'; ctx.shadowBlur = size * .35; ctx.shadowOffsetY = 2; }
+  ctx.fillStyle = color;
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function pill(str, x, y, o = {}) {
+  const { size = 30, alpha = 1, bg = 'rgba(0,0,0,.55)', color = '#fff', border = null, align = 'center' } = o;
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.font = `700 ${size}px ${FONT}`;
+  const w = ctx.measureText(str).width + size * 1.2, h = size * 1.7;
+  const x0 = align === 'left' ? x : align === 'right' ? x - w : x - w / 2;
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.roundRect(x0, y - h / 2, w, h, h / 2); ctx.fill();
+  if (border) { ctx.strokeStyle = border; ctx.lineWidth = 2; ctx.stroke(); }
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(str, x0 + w / 2, y + 1);
+  ctx.restore();
+}
+function glow(x, y, r, color, alpha = 1) {
+  if (alpha <= 0 || r <= 0) return;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+function puff(x, y, r, a, c = '255,255,255') {
+  if (a <= 0 || r <= 0) return;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(${c},${a})`); g.addColorStop(1, `rgba(${c},0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+}
+function arrow(x1, y1, x2, y2, color = '#fff', w = 4, head = 18) {
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  ctx.save();
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2 - Math.cos(a) * head * .6, y2 - Math.sin(a) * head * .6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - Math.cos(a - .45) * head, y2 - Math.sin(a - .45) * head);
+  ctx.lineTo(x2 - Math.cos(a + .45) * head, y2 - Math.sin(a + .45) * head);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function vgrad(y0, y1, stops) {
+  const g = ctx.createLinearGradient(0, y0, 0, y1);
+  stops.forEach(([o, c]) => g.addColorStop(o, c));
+  return g;
+}
+function fillRect(c, x = 0, y = 0, w = W, h = H) { ctx.fillStyle = c; ctx.fillRect(x, y, w, h); }
+function stars(n, seed, alpha = 1, ymax = H) {
+  ctx.save(); ctx.fillStyle = '#fff';
+  for (let i = 0; i < n; i++) {
+    ctx.globalAlpha = alpha * (.25 + .75 * R(seed + i * 3.1));
+    ctx.fillRect(R(seed + i) * W, R(seed + i * 1.7) * ymax, 1.6, 1.6);
+  }
+  ctx.restore();
+}
+function ridge(y0, amp, seed, color, freq = 1) {
+  ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W; x += 20) {
+    const y = y0 - amp * (.5 * Math.sin(x * .004 * freq + seed) + .3 * Math.sin(x * .011 * freq + seed * 2.3) + .2 * Math.sin(x * .023 * freq + seed * 5.1));
+    ctx.lineTo(x, y);
+  }
+  ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+}
+function blobPath(cx, cy, r, seed, wob = .07, sy = 1) {
+  ctx.beginPath();
+  for (let k = 0; k <= 96; k++) {
+    const th = k / 96 * TAU;
+    const rr = r * (1 + wob * Math.sin(3 * th + seed) + wob * .6 * Math.sin(7 * th + seed * 2) + wob * .3 * Math.sin(13 * th + seed * 3));
+    const x = cx + Math.cos(th) * rr, y = cy + Math.sin(th) * rr * sy;
+    k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.closePath();
+}
+
+/* ---------- reusable visuals ---------- */
+const PRISM = [[1.0, '#6e3412'], [.9, '#a9481a'], [.8, '#d26a1f'], [.7, '#e69a33'], [.61, '#e9c64e'], [.53, '#bcc96c'], [.46, '#5fb0a0'], [.39, '#2b93c2'], [.28, '#176fb0'], [.16, '#0c4f8f']];
+function prismatic(cx, cy, R0, t, sy = 1) {
+  // runoff channels
+  ctx.save();
+  for (let i = 0; i < 26; i++) {
+    const a = R(i + 40) * TAU, len = R0 * (.4 + R(i + 41) * .7);
+    ctx.strokeStyle = `rgba(${200 + R(i) * 40 | 0},${90 + R(i + 1) * 50 | 0},30,.55)`;
+    ctx.lineWidth = 6 + R(i + 2) * 14;
+    ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * R0 * .9, cy + Math.sin(a) * R0 * .9 * sy);
+    ctx.quadraticCurveTo(cx + Math.cos(a + .15) * (R0 + len * .5), cy + Math.sin(a + .15) * (R0 + len * .5) * sy,
+      cx + Math.cos(a + .05) * (R0 + len), cy + Math.sin(a + .05) * (R0 + len) * sy);
+    ctx.stroke();
+  }
+  PRISM.forEach(([k, c], i) => {
+    blobPath(cx, cy, R0 * k, 1.3 + i * .2, .05 - i * .003, sy);
+    ctx.fillStyle = c; ctx.fill();
+  });
+  // shimmer
+  ctx.globalAlpha = .18;
+  blobPath(cx, cy, R0 * .38, 4, .04, sy);
+  const g = ctx.createRadialGradient(cx - R0 * .1, cy - R0 * .1 * sy, 0, cx, cy, R0 * .4);
+  g.addColorStop(0, '#bfe9ff'); g.addColorStop(1, 'rgba(0,80,160,0)');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.restore();
+}
+function steamField(cx, cy, spread, t, n = 50, scale = 1, alpha = .35) {
+  for (let i = 0; i < n; i++) {
+    const life = 7 + R(i) * 4;
+    const age = (t + R(i + 9) * life) % life, f = age / life;
+    const x = cx + (R(i + 3) - .5) * spread + age * (40 + R(i + 5) * 30) * scale;
+    const y = cy + (R(i + 4) - .5) * spread * .4 - age * (60 + R(i + 6) * 50) * scale;
+    puff(x, y, (60 + f * 200) * scale, alpha * Math.sin(f * Math.PI));
+  }
+}
+function geyser(x, base, t, strength, scale = 1, n = 260) {
+  if (strength <= 0) return;
+  ctx.save();
+  const ch = 560 * strength * scale;
+  const cg = ctx.createLinearGradient(0, base, 0, base - ch);
+  cg.addColorStop(0, 'rgba(240,248,255,.85)'); cg.addColorStop(.7, 'rgba(230,242,252,.5)'); cg.addColorStop(1, 'rgba(230,242,252,0)');
+  ctx.fillStyle = cg; ctx.beginPath();
+  ctx.moveTo(x - 16 * scale, base);
+  for (let k = 0; k <= 10; k++) { const yy = base - ch * k / 10; ctx.lineTo(x - (16 + k * 9) * scale + Math.sin(t * 9 + k) * 4 * scale, yy); }
+  for (let k = 10; k >= 0; k--) { const yy = base - ch * k / 10; ctx.lineTo(x + (16 + k * 9) * scale + Math.sin(t * 8 + k * 1.3) * 4 * scale, yy); }
+  ctx.closePath(); ctx.fill();
+  for (let i = 0; i < n; i++) {
+    const life = 1.6 + R(i) * 1.4;
+    const age = (t + R(i + 1) * life) % life;
+    const v = (700 + R(i + 2) * 600) * strength * scale, g = 520 * scale;
+    const y = base - (v * age - .5 * g * age * age);
+    if (y > base) continue;
+    const xx = x + (R(i + 3) - .5) * 30 * scale + (R(i + 4) - .5) * 160 * age * scale + age * age * 30 * scale;
+    ctx.globalAlpha = .55 * (1 - age / life);
+    ctx.fillStyle = R(i + 5) > .3 ? '#eef7ff' : '#bcdcf0';
+    const s = (3 + R(i + 6) * 6) * scale * (1 + age);
+    ctx.fillRect(xx - s / 2, y - s / 2, s, s);
+  }
+  ctx.restore();
+  for (let i = 0; i < 26; i++) {
+    const life = 5, age = (t + R(i + 70) * life) % life, f = age / life;
+    const top = base - 520 * strength * scale;
+    puff(x + (R(i + 71) - .3) * 120 * scale + age * 60 * scale, top + 120 * scale - age * 70 * scale + R(i) * 200 * scale,
+      (50 + f * 150) * scale, .4 * strength * Math.sin(f * Math.PI));
+  }
+}
+function bison(x, y, s, ph, color = '#14100c') {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s); ctx.fillStyle = color;
+  for (let k = 0; k < 4; k++) {
+    const lx = [-45, -30, 38, 52][k], a = Math.sin(ph + (k % 2 ? Math.PI : 0) + (k > 1 ? .8 : 0)) * .32;
+    ctx.save(); ctx.translate(lx, -2); ctx.rotate(a); ctx.fillRect(-5, 0, 10, 32); ctx.restore();
+  }
+  ctx.beginPath();
+  ctx.moveTo(-62, -18);
+  ctx.bezierCurveTo(-64, -44, -30, -50, 0, -48);
+  ctx.bezierCurveTo(22, -74, 48, -74, 58, -52);
+  ctx.bezierCurveTo(70, -46, 80, -30, 84, -10);
+  ctx.lineTo(86, 2); ctx.lineTo(72, 8);
+  ctx.bezierCurveTo(64, 14, 54, 10, 48, 4);
+  ctx.lineTo(-56, 4);
+  ctx.bezierCurveTo(-66, 0, -66, -10, -62, -18);
+  ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-62, -30); ctx.quadraticCurveTo(-74, -16, -70, 2); ctx.lineWidth = 3; ctx.strokeStyle = color; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(72, -36); ctx.quadraticCurveTo(80, -46, 76, -52); ctx.lineWidth = 4; ctx.stroke();
+  ctx.restore();
+}
+function pine(x, y, h, c) {
+  ctx.fillStyle = c; ctx.beginPath();
+  ctx.moveTo(x, y - h); ctx.lineTo(x + h * .22, y); ctx.lineTo(x - h * .22, y); ctx.closePath(); ctx.fill();
+}
+
+/* ---------- map projection (scene 3, 4) ---------- */
+const STATES = {
+  '오리건': [[-124.5, 42], [-117.03, 42], [-117.03, 43.8], [-116.9, 44.2], [-117.2, 44.3], [-116.5, 45.6], [-116.9, 46], [-119, 46], [-121, 45.6], [-124, 46.2]],
+  '아이다호': [[-117.03, 49], [-116.05, 49], [-116.05, 47.98], [-115.72, 47.42], [-114.33, 46.66], [-114.5, 45.56], [-113.45, 44.86], [-112.84, 44.36], [-111.05, 44.48], [-111.05, 42], [-117.03, 42], [-117.03, 43.8], [-116.9, 44.2], [-117.2, 44.3], [-116.5, 45.6], [-116.9, 46], [-117.03, 46.4]],
+  '몬태나': [[-116.05, 49], [-104.05, 49], [-104.05, 45], [-111.05, 45], [-111.05, 44.48], [-112.84, 44.36], [-113.45, 44.86], [-114.5, 45.56], [-114.33, 46.66], [-115.72, 47.42], [-116.05, 47.98]],
+  '와이오밍': [[-111.05, 45], [-104.05, 45], [-104.05, 41], [-111.05, 41]],
+  '네바다': [[-120, 42], [-114.04, 42], [-114.04, 36.2], [-114.6, 35], [-120, 39]],
+  '유타': [[-114.05, 42], [-111.05, 42], [-111.05, 41], [-109.05, 41], [-109.05, 37], [-114.05, 37]],
+  '워싱턴': [[-124.7, 48.4], [-123, 48.9], [-117.03, 49], [-117.03, 46.4], [-116.9, 46], [-119, 46], [-121, 45.6], [-124, 46.2]],
+  '캘리포니아': [[-124.4, 42], [-120, 42], [-120, 39], [-114.6, 35], [-114.7, 32.7], [-117.1, 32.5], [-118.5, 34], [-120.6, 34.6], [-122.4, 37.2], [-123.7, 38.9], [-124.2, 40.4]],
+  '콜로라도': [[-109.05, 41], [-102.05, 41], [-102.05, 37], [-109.05, 37]],
+};
+const LABELPOS = { '오리건': [-120.5, 44], '아이다호': [-115, 44.6], '몬태나': [-109.5, 47], '와이오밍': [-107.5, 43], '네바다': [-117, 39.5], '유타': [-111.7, 39.3], '워싱턴': [-120.5, 47.4], '캘리포니아': [-121.5, 38.5], '콜로라도': [-105.5, 39] };
+const TRACK = [ // lon, lat, age (Ma), name
+  [-117.8, 42.0, 16.5, '맥더밋'], [-116.4, 42.3, 14, '오와이히'], [-115.4, 42.5, 12, '브루노-자비지'],
+  [-114.4, 42.7, 10, '트윈폴스'], [-112.3, 43.6, 6.5, '헤이스'], [-110.6, 44.5, 2.1, '옐로스톤'],
+];
+const US = [[-124.7, 48.4], [-123, 48.9], [-95.2, 49], [-94.8, 49.4], [-89.6, 48], [-84.8, 46.5], [-83.5, 46.1], [-82.4, 43], [-79, 43.3], [-76, 44.2], [-74.9, 45], [-71.5, 45], [-69.2, 47.4], [-67.8, 47.1], [-67, 44.8], [-70, 43.7], [-70.6, 42], [-70, 41.6], [-73.9, 40.6], [-74, 39.5], [-75.5, 38.6], [-76, 37], [-75.5, 35.3], [-77.9, 33.9], [-79.2, 33.2], [-81, 31.9], [-81.4, 30.4], [-80, 26.7], [-80.4, 25.2], [-81.7, 25.9], [-82.8, 27.9], [-84, 30], [-85.4, 29.7], [-88, 30.7], [-89.6, 30.2], [-89.4, 29], [-91, 29.2], [-94, 29.6], [-97.2, 27.6], [-97.4, 25.9], [-99.1, 26.4], [-101.4, 29.8], [-103, 29], [-104.5, 29.6], [-106.5, 31.8], [-108.2, 31.3], [-111, 31.3], [-114.8, 32.5], [-117.1, 32.5], [-118.5, 34], [-120.6, 34.6], [-122.4, 37.2], [-123.7, 38.9], [-124.2, 40.4], [-124.4, 42.8], [-124, 46.2]];
+function polyPath(pts, P) { ctx.beginPath(); pts.forEach((p, i) => { const [x, y] = P(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); }
+
+/* ---------- SCENES ---------- */
+
+// 1. Opening
+function s1(t) {
+  // A: aerial Grand Prismatic (0-17)
+  if (t < 18) {
+    fillRect('#5a3a22');
+    const z = 1 + t * .012;
+    ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.rotate(t * .004); ctx.translate(-W / 2, -H / 2);
+    for (let i = 0; i < 260; i++) { ctx.fillStyle = `rgba(${120 + R(i) * 60 | 0},${80 + R(i + 1) * 40 | 0},50,.35)`; ctx.beginPath(); ctx.arc(R(i + 2) * W * 1.2 - 100, R(i + 3) * H * 1.2 - 100, 10 + R(i + 4) * 60, 0, TAU); ctx.fill(); }
+    // forest edges
+    for (let i = 0; i < 160; i++) { const x = R(i + 900) * W, y = R(i + 901) * 200 + (i % 2 ? -40 : H - 140); ctx.fillStyle = '#1f3020'; ctx.beginPath(); ctx.arc(x, y, 18 + R(i) * 22, 0, TAU); ctx.fill(); }
+    prismatic(W * .5, H * .52, 360, t);
+    ctx.restore();
+    steamField(W * .5, H * .5, 700, t, 60, 1.1, .32);
+    const a = win(t, 2.5, 15, 1.2);
+    ctx.save(); ctx.globalAlpha = a * .55; fillRect(vgrad(0, H, [[0, 'rgba(0,0,0,.0)'], [.5, 'rgba(0,0,0,.55)'], [1, 'rgba(0,0,0,0)']])); ctx.restore();
+    text('🌋', W / 2, 330, { size: 84, alpha: a, shadow: false });
+    text('옐로스톤은 어떻게 만들어졌을까?', W / 2, 460, { size: 92, weight: 900, alpha: a });
+    text('발밑에 잠든 거대한 불의 이야기', W / 2, 570, { size: 46, weight: 500, color: '#ffcf8a', alpha: a * prog(t, 4, 5.5) });
+    pill('그랜드 프리즈매틱 스프링', 1620, 900, { size: 28, alpha: win(t, 9, 17) });
+  }
+  // B: Old Faithful (16-29)
+  if (t > 16 && t < 30) {
+    ctx.save(); ctx.globalAlpha = win(t, 16, 30, 1.2);
+    fillRect(vgrad(0, H, [[0, '#7fb2d9'], [.55, '#cfe2ee'], [1, '#e9e2d0']]));
+    ridge(560, 90, 1, '#7b8fa0'); ridge(640, 70, 3, '#4f6a55');
+    for (let i = 0; i < 70; i++) pine(R(i + 50) * W, 660 + R(i + 51) * 30, 50 + R(i + 52) * 50, '#2c4632');
+    fillRect(vgrad(680, H, [[0, '#cbbfa4'], [1, '#a59a7f']]), 0, 680, W, H - 680);
+    ctx.fillStyle = '#e4dcc7'; ctx.beginPath(); ctx.ellipse(960, 760, 360, 60, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#d9cfb6'; ctx.beginPath(); ctx.ellipse(960, 752, 160, 26, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#6b5236'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(0, 900); ctx.quadraticCurveTo(960, 840, W, 910); ctx.stroke();
+    for (let x = 30; x < W; x += 70) { ctx.fillStyle = '#6b5236'; ctx.fillRect(x, 870 + Math.abs(x - 960) * .03, 5, 30); }
+    const st = ease(prog(t, 17.5, 20)) * (1 + .08 * Math.sin(t * 3));
+    geyser(960, 750, t, st, 1.15, 420);
+    pill('올드 페이스풀 간헐천', 960, 980 - 60, { size: 30, alpha: win(t, 19, 28.5) });
+    pill('📍 미국 와이오밍주', 260, 120, { size: 30, alpha: win(t, 18, 29) });
+    pill('1872 · 세계 최초의 국립공원', 1620, 120, { size: 30, alpha: win(t, 20.5, 29), border: '#ffcf8a' });
+    ctx.restore();
+  }
+  // C: below the ground (29-40)
+  if (t > 28.8) {
+    const p = ease(prog(t, 29, 33));
+    ctx.save(); ctx.globalAlpha = win(t, 28.8, 41, 1);
+    const top = lerp(700, 180, p);
+    fillRect(vgrad(0, top, [[0, '#87b5d6'], [1, '#e0d6bf']]), 0, 0, W, top);
+    ridge(top - 20, 40, 2, '#4f6a55');
+    fillRect(vgrad(top, H, [[0, '#8a6a48'], [.25, '#5e4330'], [.6, '#3a2219'], [1, '#2a120c']]), 0, top, W, H - top);
+    for (let i = 0; i < 6; i++) { ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 2; ctx.beginPath(); for (let x = 0; x <= W; x += 30) { const y = top + 60 + i * 110 + Math.sin(x * .005 + i) * 18; x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+    geyser(960, top, t, .35, .5, 120);
+    const my = top + 640, pulse = 1 + .03 * Math.sin(t * 2);
+    glow(960, my, 640 * pulse, 'rgba(255,90,20,.55)', prog(t, 31, 34));
+    ctx.save(); ctx.globalAlpha *= prog(t, 31, 34);
+    blobPath(960, my, 420 * pulse, 2, .08, .32);
+    const mg = ctx.createRadialGradient(960, my, 0, 960, my, 420);
+    mg.addColorStop(0, '#ffd36b'); mg.addColorStop(.5, '#ff7a1a'); mg.addColorStop(1, '#a3200c');
+    ctx.fillStyle = mg; ctx.fill(); ctx.restore();
+    // depth ruler
+    ctx.save(); ctx.globalAlpha *= prog(t, 32, 34);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(150, top); ctx.lineTo(150, H - 40); ctx.stroke();
+    ['0 km', '5 km', '10 km', '15 km'].forEach((s, i) => { const y = top + i * ((H - 40 - top) / 3); ctx.beginPath(); ctx.moveTo(140, y); ctx.lineTo(160, y); ctx.stroke(); text(s, 175, y, { size: 24, align: 'left', weight: 500 }); });
+    ctx.restore();
+    pill('마그마 저장소 · 지하 약 5~17 km', 960, my - 210, { size: 30, alpha: win(t, 33, 39.5), bg: 'rgba(60,10,0,.7)', border: '#ffb36b' });
+    text('도대체 어떻게 만들어졌을까?', W / 2, 150 + top * .2, { size: 54, weight: 900, alpha: win(t, 35.5, 40) });
+    ctx.restore();
+  }
+}
+
+// 2. Deep earth
+function earthView(t, z = 1) {
+  const cx = 960, cy = 1180, RR = 900;
+  ctx.save();
+  fillRect('#05060b'); stars(220, 7, .9, 600);
+  glow(cx, cy, RR + 120, 'rgba(90,160,255,.35)');
+  ctx.beginPath(); ctx.arc(cx, cy, RR, 0, TAU); ctx.fillStyle = '#6b4a2f'; ctx.fill();
+  const mg = ctx.createRadialGradient(cx, cy, 495, cx, cy, RR - 22);
+  mg.addColorStop(0, '#f39a2c'); mg.addColorStop(.45, '#d2521c'); mg.addColorStop(1, '#7a2410');
+  ctx.beginPath(); ctx.arc(cx, cy, RR - 22, 0, TAU); ctx.fillStyle = mg; ctx.fill();
+  // mantle convection swirls
+  ctx.save(); ctx.globalAlpha = .18; ctx.strokeStyle = '#ffd08a'; ctx.lineWidth = 3;
+  for (let i = 0; i < 8; i++) { const a0 = -Math.PI + i * .4 + t * .02; ctx.beginPath(); ctx.arc(cx, cy, 560 + (i % 3) * 90, a0, a0 + .5); ctx.stroke(); }
+  ctx.restore();
+  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 495);
+  cg.addColorStop(0, '#fffbe0'); cg.addColorStop(.35, '#ffe07a'); cg.addColorStop(1, '#f2a531');
+  ctx.beginPath(); ctx.arc(cx, cy, 495, 0, TAU); ctx.fillStyle = cg; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, 175, 0, TAU); ctx.fillStyle = '#fffbea'; ctx.fill();
+  // plume
+  const g = ease(prog(t, 7, 22));
+  if (g > 0) {
+    const y0 = cy - 495, headY = lerp(y0, cy - RR + 60, g);
+    ctx.save();
+    const pg = ctx.createLinearGradient(0, headY, 0, y0);
+    pg.addColorStop(0, '#fff3a8'); pg.addColorStop(1, '#ffb13b');
+    ctx.fillStyle = pg; ctx.beginPath();
+    for (let y = y0; y >= headY; y -= 8) { const w = 34 + 6 * Math.sin(y * .04 + t * 3); ctx.lineTo(cx - w + Math.sin(y * .01) * 10, y); }
+    for (let y = headY; y <= y0; y += 8) { const w = 34 + 6 * Math.sin(y * .04 + t * 3 + 1); ctx.lineTo(cx + w + Math.sin(y * .01) * 10, y); }
+    ctx.closePath(); ctx.fill();
+    const hr = 40 + 60 * g;
+    ctx.beginPath(); ctx.ellipse(cx, headY, hr * 1.4, hr * .7, 0, 0, TAU); ctx.fill();
+    glow(cx, headY, hr * 3, 'rgba(255,230,120,.7)', .8 + .2 * Math.sin(t * 4));
+    for (let i = 0; i < 18; i++) { const f = (t * .25 + R(i)) % 1; const y = lerp(y0, headY, f); ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.beginPath(); ctx.arc(cx + (R(i + 2) - .5) * 40, y, 4 + R(i + 3) * 5, 0, TAU); ctx.fill(); }
+    ctx.restore();
+    if (g >= 1) for (let k = 0; k < 3; k++) { const f = (t * .5 + k / 3) % 1; ctx.strokeStyle = `rgba(255,220,120,${1 - f})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(cx, headY, 60 + f * 160, 20 + f * 50, 0, 0, TAU); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+function s2(t) {
+  // A: earth cross section (0-31)
+  if (t < 32) {
+    const z = 1 + ease(prog(t, 27, 32)) * 2.2;
+    ctx.save(); ctx.globalAlpha = clamp((32 - t) / 1.2);
+    ctx.translate(960, 340); ctx.scale(z, z); ctx.translate(-960, -340);
+    earthView(t);
+    ctx.restore();
+    const la = win(t, 2, 26, 1) * clamp((32 - t) / 1.2);
+    const labels = [['지각', 370, 1, 590], ['맨틀', 560, 3, 520], ['외핵', 760, 5, 700], ['내핵', 1060, 7, 860]];
+    labels.forEach(([s, y, d, x2]) => {
+      const a = la * prog(t, d * .5, d * .5 + 1);
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(320, y); ctx.lineTo(x2, y); ctx.stroke(); ctx.restore();
+      text(s, 300, y, { size: 36, align: 'right', alpha: a });
+    });
+    pill('맨틀 플룸 · 뜨거운 물질이 기둥처럼 상승', 1440, 560, { size: 30, alpha: win(t, 12, 27), bg: 'rgba(60,20,0,.7)', border: '#ffd36b' });
+    pill('열점 (핫스팟)', 960, 190, { size: 40, alpha: win(t, 21, 31), bg: 'rgba(120,30,0,.8)', border: '#fff1a0' });
+    text('이야기는 지구 깊숙한 곳에서 시작됩니다', 960, 90, { size: 44, alpha: win(t, 1.5, 9) });
+  }
+  // B: crust close-up — melting (30-48)
+  if (t > 30 && t < 49) {
+    ctx.save(); ctx.globalAlpha = win(t, 30, 49, 1.5);
+    fillRect(vgrad(0, 260, [[0, '#4d7fb0'], [1, '#c5d9e8']]), 0, 0, W, 260);
+    ctx.fillStyle = '#4c3a2c'; ctx.beginPath(); ctx.moveTo(0, 260); ctx.lineTo(820, 260); ctx.lineTo(960, 170); ctx.lineTo(1100, 260); ctx.lineTo(W, 260); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
+    fillRect(vgrad(260, H, [[0, '#6e5440'], [.55, '#4a3123'], [.8, '#7a2a12'], [1, '#e2541a']]), 0, 262, W, H - 262);
+    for (let i = 0; i < 5; i++) { ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 2; ctx.beginPath(); for (let x = 0; x <= W; x += 30) { const y = 340 + i * 110 + Math.sin(x * .006 + i * 2) * 14; x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+    // plume head
+    glow(960, H + 60, 700, 'rgba(255,200,80,.9)');
+    text('열점 (뜨거운 맨틀)', 960, 1000, { size: 34, alpha: win(t, 31, 47), color: '#2a0d00', shadow: false });
+    // melt pockets
+    const m = prog(t, 33, 40);
+    for (let i = 0; i < 22; i++) {
+      const x = 560 + R(i + 11) * 800, y = 780 + R(i + 12) * 120;
+      ctx.fillStyle = `rgba(255,${120 + R(i) * 80 | 0},30,${m * .9})`;
+      ctx.beginPath(); ctx.ellipse(x, y, 10 + m * 26 * R(i + 13), 6 + m * 10, 0, 0, TAU); ctx.fill();
+    }
+    // cracks & rising magma
+    const cracks = [[700, 800, 860, 560, 960, 270], [1240, 820, 1060, 560, 960, 270], [960, 820, 940, 600, 960, 270]];
+    const rise = prog(t, 38, 46);
+    cracks.forEach(([x1, y1, x2, y2, x3, y3], j) => {
+      ctx.strokeStyle = 'rgba(20,10,5,.8)'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(x2, y2, x3, y3); ctx.stroke();
+      if (rise > 0) {
+        ctx.strokeStyle = '#ff8a20'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+        ctx.setLineDash([30, 24]); ctx.lineDashOffset = t * 80;
+        ctx.globalAlpha *= 1; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.quadraticCurveTo(x2, y2, x3, y3); ctx.stroke(); ctx.setLineDash([]);
+      }
+    });
+    glow(960, 560, 220, 'rgba(255,120,30,.8)', rise);
+    ctx.save(); ctx.globalAlpha *= rise; blobPath(960, 560, 120, 1, .1, .4); ctx.fillStyle = '#ff7b1c'; ctx.fill(); ctx.restore();
+    if (rise > .8) { for (let i = 0; i < 20; i++) { const f = (t * .35 + R(i)) % 1; puff(960 + (R(i + 1) - .5) * 80 + f * 120, 170 - f * 160, 30 + f * 70, .5 * (1 - f), '120,110,100'); } glow(960, 175, 80, 'rgba(255,140,40,.9)'); }
+    pill('암석이 녹아 마그마가 생긴다', 1440, 840, { size: 30, alpha: win(t, 34, 47), bg: 'rgba(80,20,0,.75)' });
+    pill('마그마는 틈을 찾아 위로', 1450, 520, { size: 30, alpha: win(t, 39, 47), bg: 'rgba(80,20,0,.75)' });
+    ctx.restore();
+  }
+  // C: Hawaii (47-60)
+  if (t > 47) {
+    ctx.save(); ctx.globalAlpha = win(t, 47, 61, 1.2);
+    fillRect(vgrad(0, 440, [[0, '#4b8fd1'], [1, '#bfe2f5']]), 0, 0, W, 440);
+    fillRect(vgrad(440, 700, [[0, '#1d6fa5'], [1, '#0b3a63']]), 0, 440, W, 260);
+    fillRect(vgrad(700, H, [[0, '#4a3123'], [.6, '#6a2a14'], [1, '#d65318']]), 0, 700, W, H - 700);
+    const hx = 1400;
+    glow(hx, H, 360, 'rgba(255,210,90,.9)');
+    ctx.strokeStyle = '#ffa53a'; ctx.lineWidth = 12; ctx.setLineDash([24, 18]); ctx.lineDashOffset = t * 60;
+    ctx.beginPath(); ctx.moveTo(hx, H - 60); ctx.lineTo(hx, 460); ctx.stroke(); ctx.setLineDash([]);
+    const drift = (t - 47) * 6;
+    const isl = [['하와이', 0, 1], ['마우이', 1.3, .78], ['오아후', 3, .6], ['카우아이', 5, .45]];
+    isl.forEach(([nm, age, sz]) => {
+      const x = hx - age * 170 - drift, h = 250 * sz;
+      ctx.fillStyle = age === 0 ? '#3e3a2e' : '#3f6b3a';
+      ctx.beginPath(); ctx.moveTo(x - h * 1.4, 700); ctx.quadraticCurveTo(x, 180 - h * 1.2, x + h * 1.4, 700); ctx.fill();
+      text(nm, x, 440 - h * .6 - 50, { size: 30, alpha: prog(t, 49 + age * .4, 50 + age * .4) });
+    });
+    glow(hx - drift, 440 - 150, 70, 'rgba(255,120,30,.8)', .7 + .3 * Math.sin(t * 5));
+    arrow(1050, 760, 650, 760, '#fff', 6, 26);
+    text('태평양판 이동 방향', 850, 810, { size: 28, weight: 500 });
+    pill('하와이 섬들도 열점이 만들었다', 960, 120, { size: 40, alpha: win(t, 49, 59.5), bg: 'rgba(0,30,60,.7)', border: '#9fd8ff' });
+    ctx.restore();
+  }
+}
+
+// 3. Moving continent
+function s3(t) {
+  fillRect('#0f1a24');
+  const HX = 1080, HY = 620, KX = 92, KY = 125;
+  // current track position by age
+  const ageNow = lerp(16.5, 2.1, ease(prog(t, 8, 46)));
+  let cur = TRACK[0];
+  for (let i = 0; i < TRACK.length - 1; i++) {
+    const a = TRACK[i], b = TRACK[i + 1];
+    if (ageNow <= a[2] && ageNow >= b[2]) { const f = (a[2] - ageNow) / (a[2] - b[2]); cur = [lerp(a[0], b[0], f), lerp(a[1], b[1], f)]; }
+  }
+  if (ageNow <= 2.1) cur = TRACK[TRACK.length - 1];
+  const zo = 1 - .28 * ease(prog(t, 46, 52));
+  const midLon = lerp(cur[0], -114, ease(prog(t, 46, 52))), midLat = lerp(cur[1], 43.3, ease(prog(t, 46, 52)));
+  const cx = lerp(HX, 960, ease(prog(t, 46, 52))), cy = lerp(HY, 560, ease(prog(t, 46, 52)));
+  const P = (lon, lat) => [cx + (lon - midLon) * KX * zo, cy - (lat - midLat) * KY * zo];
+  // plate grid
+  ctx.save(); ctx.strokeStyle = 'rgba(120,170,210,.12)'; ctx.lineWidth = 1;
+  for (let lon = -130; lon <= -95; lon += 2) { const [x] = P(lon, 0); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let lat = 30; lat <= 55; lat += 2) { const [, y] = P(0, lat); ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.restore();
+  // land
+  polyPath(US, P); ctx.fillStyle = '#2c3a2e'; ctx.fill();
+  Object.entries(STATES).forEach(([nm, pts]) => {
+    polyPath(pts, P);
+    ctx.fillStyle = (nm === '아이다호' || nm === '와이오밍') ? '#3f5340' : '#34463a'; ctx.fill();
+    ctx.strokeStyle = 'rgba(230,230,210,.35)'; ctx.lineWidth = 2; ctx.stroke();
+    const [lx, ly] = P(...LABELPOS[nm]); text(nm, lx, ly, { size: 26, weight: 500, color: 'rgba(235,230,215,.75)', shadow: false });
+  });
+  // track glow (Snake River Plain)
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const passed = TRACK.filter(c => c[2] >= ageNow - .01);
+  ctx.strokeStyle = 'rgba(255,170,60,.25)'; ctx.lineWidth = 70 * zo;
+  ctx.beginPath(); passed.forEach((c, i) => { const [x, y] = P(c[0], c[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  const [qx, qy] = P(cur[0], cur[1]); ctx.lineTo(qx, qy); ctx.stroke();
+  ctx.restore();
+  // calderas
+  TRACK.forEach((c, i) => {
+    if (c[2] < ageNow - .01) return;
+    const [x, y] = P(c[0], c[1]);
+    const born = clamp((c[2] - ageNow) / .6);
+    ctx.save(); ctx.globalAlpha = .4 + .6 * born;
+    ctx.fillStyle = 'rgba(160,60,20,.75)'; ctx.strokeStyle = '#ffb35a'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(x, y, 34 * zo * (.6 + .4 * easeOut(born)), 22 * zo * (.6 + .4 * easeOut(born)), -.4, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.restore();
+    const lbl = `${(c[2] * 100).toLocaleString()}만 년 전`;
+    const off = (i % 2 ? -1 : 1) * 46 * zo;
+    text(lbl, x, y + off, { size: 22, weight: 700, color: '#ffd7a0', alpha: born });
+    if (t > 50 && i === TRACK.length - 1) pill('옐로스톤', x + 30, y - 90 * zo, { size: 26, alpha: prog(t, 50, 51), bg: 'rgba(120,30,0,.8)' });
+  });
+  // hotspot (fixed in screen space)
+  const [hx, hy] = P(cur[0], cur[1]);
+  const hsA = clamp((52 - t) / 1.5) * prog(t, 1, 3);
+  glow(hx, hy, 120, 'rgba(255,80,20,.9)', hsA * (.8 + .2 * Math.sin(t * 4)));
+  for (let k = 0; k < 3; k++) { const f = (t * .6 + k / 3) % 1; ctx.strokeStyle = `rgba(255,140,60,${(1 - f) * hsA})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(hx, hy, 20 + f * 80, 0, TAU); ctx.stroke(); }
+  pill('열점 (거의 제자리)', hx, hy - 120, { size: 28, alpha: hsA * prog(t, 2, 4), bg: 'rgba(120,30,0,.8)' });
+  // plate motion arrow
+  const pa = win(t, 4, 48, 1);
+  ctx.save(); ctx.globalAlpha = pa;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.roundRect(60, 760, 470, 170, 16); ctx.fill();
+  arrow(420, 790, 300, 890, '#9fd8ff', 8, 30);
+  text('북아메리카 판', 110, 820, { size: 30, align: 'left' });
+  text('남서쪽으로', 110, 862, { size: 26, align: 'left', weight: 500, color: '#9fd8ff' });
+  text('연 2~4 cm', 110, 900, { size: 26, align: 'left', weight: 500, color: '#9fd8ff' });
+  ctx.restore();
+  // age counter
+  const ca = win(t, 7, 50, 1);
+  ctx.save(); ctx.globalAlpha = ca; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.beginPath(); ctx.roundRect(1440, 60, 420, 130, 16); ctx.fill(); ctx.restore();
+  text('시간', 1480, 98, { size: 24, align: 'left', weight: 500, color: '#bbb', alpha: ca });
+  text(ageNow > 2.15 ? `약 ${Math.round(ageNow * 100).toLocaleString()}만 년 전` : '현재 · 옐로스톤', 1480, 148, { size: 44, align: 'left', weight: 900, color: '#ffcf8a', alpha: ca });
+  // finale
+  if (t > 50) {
+    const [ax, ay] = P(-115.8, 42.1);
+    text('스네이크강 평원 · 화산의 발자국', ax, ay + 80, { size: 30, color: '#ffcf8a', alpha: prog(t, 51, 52.5) });
+    const fa = win(t, 52.5, 60.5);
+    ctx.save(); ctx.globalAlpha = fa * .6; fillRect('rgba(0,0,0,.6)', 0, 70, W, 140); ctx.restore();
+    text('열점이 움직인 게 아니라, 대륙이 열점 위를 지나가는 것', 960, 140, { size: 48, weight: 900, alpha: fa });
+  }
+}
+
+// 4. Three supereruptions
+function eruptionScene(t, seed = 0) {
+  fillRect(vgrad(0, H, [[0, '#120806'], [.5, '#4a1a0c'], [1, '#2a0f08']]));
+  glow(960, 820, 700, 'rgba(255,90,20,.45)', .8 + .2 * Math.sin(t * 7));
+  // ash column & umbrella
+  for (let i = 0; i < 240; i++) {
+    const life = 7, age = (t + R(i + seed) * life) % life, f = age / life;
+    const rise = Math.min(age * 220, 600);
+    const over = Math.max(0, age * 220 - 600) / 220;
+    const dir = R(i + 2) > .5 ? 1 : -1;
+    const x = 960 + (R(i + 1) - .5) * (80 + rise * .35) + dir * over * (160 + R(i + 3) * 160);
+    const y = 800 - rise + over * 20 + Math.sin(age * 2 + i) * 10;
+    const c = 60 + R(i + 4) * 50 | 0;
+    puff(x, y, 50 + f * 140, .55 * Math.sin(Math.min(1, f * 1.2) * Math.PI) + .05, `${c + 20},${c},${c - 10}`);
+  }
+  ridge(860, 70, 9, '#0d0705');
+  ctx.fillStyle = '#0d0705'; ctx.beginPath(); ctx.moveTo(700, 880); ctx.lineTo(900, 790); ctx.lineTo(1020, 790); ctx.lineTo(1220, 880); ctx.fill();
+  glow(960, 800, 160, 'rgba(255,160,40,.95)');
+  // lightning
+  const lk = Math.floor(t * 3);
+  if (R(lk + seed) > .8) {
+    ctx.save(); ctx.strokeStyle = 'rgba(220,230,255,.9)'; ctx.lineWidth = 3; ctx.shadowColor = '#bcd'; ctx.shadowBlur = 20;
+    let x = 760 + R(lk + 1) * 400, y = 320; ctx.beginPath(); ctx.moveTo(x, y);
+    for (let k = 0; k < 7; k++) { x += (R(lk * 7 + k) - .5) * 70; y += 45; ctx.lineTo(x, y); }
+    ctx.stroke(); ctx.restore();
+  }
+}
+const ASH = [
+  { age: '약 210만 년 전', vol: '≈ 2,500 km³', name: '1차 분화', blobs: [[-104, 40, 11, 1], [-98, 37, 7, 2], [-113, 39, 6, 3]] },
+  { age: '약 130만 년 전', vol: '≈ 280 km³', name: '2차 분화', blobs: [[-109, 43.5, 3.5, 4]] },
+  { age: '약 63만 년 전', vol: '≈ 1,000 km³', name: '3차 분화', blobs: [[-104, 40.5, 9, 5], [-97, 38, 5.5, 6], [-114, 38, 5, 7]] },
+];
+function s4(t) {
+  // A: eruption (0-14)
+  if (t < 15) { ctx.save(); ctx.globalAlpha = clamp((15 - t) / 1.2); eruptionScene(t); text('초거대 분화', 960, 140, { size: 72, weight: 900, alpha: win(t, 2, 13) }); text('Supereruption', 960, 215, { size: 32, weight: 500, color: '#ffb36b', alpha: win(t, 2.5, 13) }); ctx.restore(); }
+  // B: ash map (13-44)
+  if (t > 13 && t < 45) {
+    ctx.save(); ctx.globalAlpha = win(t, 13, 45, 1.2);
+    fillRect('#0c1520');
+    const P = (lon, lat) => [960 + (lon + 97) * 25, 470 - (lat - 38) * 33];
+    ctx.save(); ctx.fillStyle = '#1b2733'; ctx.fillRect(0, 0, W, P(0, 49)[1]); ctx.restore();
+    polyPath(US, P); ctx.fillStyle = '#2f3e33'; ctx.fill(); ctx.strokeStyle = 'rgba(230,230,210,.4)'; ctx.lineWidth = 2; ctx.stroke();
+    text('캐나다', ...P(-100, 52), { size: 26, weight: 500, color: 'rgba(230,230,210,.5)', shadow: false });
+    text('멕시코', ...P(-104, 27.2), { size: 26, weight: 500, color: 'rgba(230,230,210,.5)', shadow: false });
+    ctx.save(); polyPath(US, P); ctx.clip();
+    ASH.forEach((a, k) => {
+      const t0 = 16 + k * 8.5, g = easeOut(prog(t, t0, t0 + 5));
+      a.blobs.forEach(([lon, lat, r, sd]) => {
+        const [x, y] = P(lerp(-110.6, lon, g), lerp(44.5, lat, g));
+        blobPath(x, y, r * 33 * g, sd, .12, .85);
+        ctx.fillStyle = `rgba(${[205, 180, 230][k]},${[200, 175, 215][k]},${[190, 165, 190][k]},${.22 + (k === Math.floor(prog(t, 16, 41.5) * 3) ? .15 : 0)})`; ctx.fill();
+      });
+    });
+    ctx.restore();
+    const [yx, yy] = P(-110.6, 44.5);
+    glow(yx, yy, 70, 'rgba(255,90,20,.95)', .8 + .2 * Math.sin(t * 5));
+    pill('옐로스톤', yx, yy - 60, { size: 26, bg: 'rgba(120,30,0,.8)' });
+    // timeline
+    const ty = 860;
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(260, ty); ctx.lineTo(1660, ty); ctx.stroke();
+    text('200만 년 전', 260, ty + 40, { size: 22, weight: 500, color: '#aaa' }); text('현재', 1660, ty + 40, { size: 22, weight: 500, color: '#aaa' });
+    ASH.forEach((a, k) => {
+      const t0 = 16 + k * 8.5, x = 260 + (1 - [2.1, 1.3, .63][k] / 2.2) * 1400 + [-60, 0, 0][k];
+      const ap = prog(t, t0, t0 + 1);
+      ctx.fillStyle = '#ff7b1c'; ctx.globalAlpha *= 1; ctx.beginPath(); ctx.arc(x, ty, 10 + 6 * ap, 0, TAU); ctx.fill();
+      text(a.age, x, ty - 80, { size: 34, weight: 900, color: '#ffcf8a', alpha: ap });
+      text(`${a.name} · ${a.vol}`, x, ty - 38, { size: 24, weight: 500, alpha: ap });
+    });
+    pill('화산재가 북아메리카의 넓은 지역을 뒤덮다', 960, 80, { size: 34, alpha: win(t, 18, 43.5), bg: 'rgba(0,0,0,.6)' });
+    ctx.restore();
+  }
+  // C: volume comparison (43-55)
+  if (t > 43 && t < 56) {
+    ctx.save(); ctx.globalAlpha = win(t, 43, 56, 1.2);
+    fillRect('#121214');
+    text('분출된 마그마의 양 비교', 960, 110, { size: 48, weight: 900 });
+    const items = [['1980 세인트헬렌스', 1, '#9fd8ff'], ['130만 년 전', 280, '#e9c64e'], ['63만 년 전', 1000, '#ff9a3a'], ['210만 년 전', 2500, '#ff5a2a']];
+    let x = 260; const base = 820;
+    items.forEach(([nm, v, c], i) => {
+      const s = 30 * Math.cbrt(v) * easeOut(prog(t, 44 + i * 1.6, 46 + i * 1.6));
+      const d = s * .35;
+      ctx.fillStyle = c; ctx.globalAlpha = 1; ctx.fillRect(x, base - s, s, s);
+      ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.moveTo(x, base - s); ctx.lineTo(x + d, base - s - d); ctx.lineTo(x + s + d, base - s - d); ctx.lineTo(x + s, base - s); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.moveTo(x + s, base - s); ctx.lineTo(x + s + d, base - s - d); ctx.lineTo(x + s + d, base - d); ctx.lineTo(x + s, base); ctx.fill();
+      const a = prog(t, 45 + i * 1.6, 46.5 + i * 1.6);
+      text(nm, x + Math.max(s, 40) / 2, base + 50, { size: 26, weight: 700, alpha: a });
+      text(`${v.toLocaleString()} km³`, x + Math.max(s, 40) / 2, base + 90, { size: 24, weight: 500, color: c, alpha: a });
+      x += Math.max(s * 1.35, 230) + 60;
+    });
+    ctx.restore();
+  }
+  // D: caldera collapse (54-80)
+  if (t > 54) {
+    ctx.save(); ctx.globalAlpha = win(t, 54, 81, 1.2);
+    fillRect(vgrad(0, 420, [[0, '#3b4c63'], [1, '#a9a7a0']]), 0, 0, W, 420);
+    const drain = prog(t, 56, 64), drop = ease(prog(t, 61, 68));
+    const L = 360, Rr = 1560, top = 420, dd = 170 * drop;
+    // magma chamber
+    fillRect(vgrad(420, H, [[0, '#6b5644'], [.6, '#4a3124'], [1, '#3a1a10']]), 0, 420, W, H - 420);
+    const cy = 790, level = lerp(cy - 150, cy + 150, drain * .85);
+    ctx.save(); ctx.beginPath(); ctx.ellipse(960, cy, 560, 160, 0, 0, TAU); ctx.fillStyle = '#2a1510'; ctx.fill(); ctx.clip();
+    ctx.fillStyle = vgrad(level, cy + 160, [[0, '#ffcf5a'], [.4, '#ff6a1a'], [1, '#a3200c']]); ctx.fillRect(0, level, W, H);
+    ctx.restore();
+    // central block (drops)
+    ctx.fillStyle = '#7a6550';
+    ctx.beginPath(); ctx.moveTo(L, top + dd); ctx.lineTo(Rr, top + dd); ctx.lineTo(Rr - 40, 630 + dd); ctx.lineTo(L + 40, 630 + dd); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(L + 10 * i, top + dd + i * 50); ctx.lineTo(Rr - 10 * i, top + dd + i * 50); ctx.stroke(); }
+    // outer ground
+    ctx.fillStyle = '#7a6550'; ctx.fillRect(0, top, L, 220); ctx.fillRect(Rr, top, W - Rr, 220);
+    ctx.fillStyle = '#4f6a55'; ctx.fillRect(0, top - 14, L, 14); ctx.fillRect(Rr, top - 14, W - Rr, 14); ctx.fillRect(L, top + dd - 14, Rr - L, 14);
+    // ring faults
+    ctx.strokeStyle = '#1a0e08'; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(L, top - 14); ctx.lineTo(L + 40, 650 + dd); ctx.moveTo(Rr, top - 14); ctx.lineTo(Rr - 40, 650 + dd); ctx.stroke();
+    // eruption jets from ring faults
+    const jet = win(t, 55.5, 64, 1);
+    [L, Rr].forEach((x, j) => {
+      glow(x, top, 120, 'rgba(255,140,40,.9)', jet);
+      for (let i = 0; i < 40; i++) { const f = (t * .4 + R(i + j * 50)) % 1; puff(x + (R(i + 1) - .5) * 120 + (j ? 1 : -1) * f * 60, top - f * 380, 30 + f * 90, .6 * jet * (1 - f), '110,100,95'); }
+    });
+    pill('① 마그마가 한꺼번에 빠져나가고', 960, 120, { size: 34, alpha: win(t, 55.5, 61.5), bg: 'rgba(0,0,0,.6)' });
+    pill('② 위의 땅이 버티지 못하고 푹 꺼진다', 960, 120, { size: 34, alpha: win(t, 62, 68.5), bg: 'rgba(0,0,0,.6)' });
+    // dimension
+    const da = prog(t, 69, 70.5);
+    if (da > 0) {
+      ctx.save(); ctx.globalAlpha *= da;
+      arrow(960, 300, L + 10, 300, '#ffcf8a', 4, 20); arrow(960, 300, Rr - 10, 300, '#ffcf8a', 4, 20);
+      ctx.restore();
+      text('약 70~80 km', 960, 260, { size: 48, weight: 900, color: '#ffcf8a', alpha: da });
+      pill('칼데라 (Caldera) · 거대한 가마솥 모양 분지', 960, 120, { size: 34, alpha: win(t, 70, 80), bg: 'rgba(80,20,0,.75)', border: '#ffcf8a' });
+      text('너무 커서 땅 위에서는 분화구인지조차 알아보기 어렵다', 960, 1000 - 70, { size: 28, weight: 500, color: '#eee', alpha: win(t, 74, 80) * 0 });
+    }
+    ctx.restore();
+  }
+}
+
+// 5. Lava & ice
+function s5(t) {
+  // A: lava fill (0-21)
+  if (t < 22) {
+    ctx.save(); ctx.globalAlpha = clamp((22 - t) / 1.2);
+    fillRect(vgrad(0, 500, [[0, '#2c3b55'], [1, '#9c9a94']]), 0, 0, W, 500);
+    fillRect(vgrad(420, H, [[0, '#6b5644'], [1, '#3a1a10']]), 0, 420, W, H - 420);
+    ctx.fillStyle = '#4f6a55'; ctx.fillRect(0, 406, 360, 14); ctx.fillRect(1560, 406, 360, 14);
+    ctx.fillStyle = vgrad(0, 590, [[0, '#2c3b55'], [1, '#9c9a94']]); ctx.fillRect(360, 400, 1200, 190);
+    ctx.fillStyle = '#3a2c22'; ctx.fillRect(360, 590, 1200, 490);
+    const n = 6;
+    for (let i = 0; i < n; i++) {
+      const t0 = 2 + i * 2.6, g = ease(prog(t, t0, t0 + 2.2)), cool = prog(t, t0 + 2, t0 + 6);
+      if (g <= 0) continue;
+      const yb = 590 - i * 30, yt = yb - 30;
+      const reach = g;
+      const hot = `rgb(${lerp(255, 90, cool) | 0},${lerp(130, 72, cool) | 0},${lerp(30, 60, cool) | 0})`;
+      ctx.fillStyle = hot;
+      ctx.beginPath(); ctx.moveTo(960 - 600 * reach, yb); ctx.lineTo(960 + 600 * reach, yb);
+      for (let x = 960 + 600 * reach; x >= 960 - 600 * reach; x -= 30) ctx.lineTo(x, yt + Math.sin(x * .02 + i) * 4);
+      ctx.closePath(); ctx.fill();
+      if (cool < 1) glow(960, yt, 500 * reach, 'rgba(255,120,30,.5)', 1 - cool);
+    }
+    pill('수십만 년 동안 · 끈적한 용암이 여러 차례', 960, 140, { size: 34, alpha: win(t, 2, 20.5), bg: 'rgba(0,0,0,.6)' });
+    pill('→ 오늘날 옐로스톤 고원의 바탕', 960, 230, { size: 30, alpha: win(t, 15, 20.5), bg: 'rgba(80,30,0,.6)', border: '#ffcf8a' });
+    ctx.restore();
+  }
+  // B: ice age (20-41)
+  if (t > 20 && t < 42) {
+    ctx.save(); ctx.globalAlpha = win(t, 20, 42, 1.2);
+    fillRect(vgrad(0, 600, [[0, '#4e6d8c'], [1, '#d6e4ee']]), 0, 0, W, 600);
+    const surf = 600, notch = ease(prog(t, 33, 40));
+    ctx.fillStyle = '#5b4a3a';
+    ctx.beginPath(); ctx.moveTo(0, surf);
+    ctx.lineTo(820, surf); ctx.lineTo(960, surf + 220 * notch); ctx.lineTo(1100, surf);
+    ctx.lineTo(W, surf); ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
+    ctx.fillStyle = '#4f6a55'; ctx.fillRect(0, surf - 10, 820, 10); ctx.fillRect(1100, surf - 10, W - 1100, 10);
+    const grow = ease(prog(t, 21, 27)), melt = ease(prog(t, 30, 37));
+    const thick = 300 * grow * (1 - melt);
+    if (thick > 1) {
+      ctx.fillStyle = vgrad(surf - thick, surf, [[0, '#f4fbff'], [1, '#a9d4ec']]);
+      ctx.beginPath(); ctx.moveTo(0, surf);
+      for (let x = 0; x <= W; x += 40) ctx.lineTo(x, surf - thick + Math.sin(x * .006) * 18 * grow);
+      ctx.lineTo(W, surf); ctx.fill();
+      ctx.save(); ctx.globalAlpha *= win(t, 25, 31);
+      arrow(1700, surf - 10, 1700, surf - thick + 20, '#123', 4, 18); arrow(1700, surf - thick + 20, 1700, surf - 10, '#123', 4, 18);
+      text('약 1 km', 1680, surf - thick / 2, { size: 34, weight: 900, color: '#0d2a40', align: 'right', shadow: false });
+      ctx.restore();
+    }
+    // snow
+    for (let i = 0; i < 120; i++) { const f = (t * .15 + R(i)) % 1; ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(R(i + 1) * W + Math.sin(t + i) * 20, f * surf, 3, 3); }
+    // meltwater
+    if (melt > 0) {
+      ctx.save(); ctx.globalAlpha *= melt;
+      ctx.strokeStyle = '#5fc4ff'; ctx.lineWidth = 8; ctx.setLineDash([26, 16]); ctx.lineDashOffset = -t * 90;
+      ctx.beginPath(); ctx.moveTo(200, surf - 6); ctx.quadraticCurveTo(600, surf - 4, 950, surf + 210 * notch); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(1720, surf - 6); ctx.quadraticCurveTo(1300, surf - 4, 970, surf + 210 * notch); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+    }
+    pill('빙하기 · 고원 전체를 덮은 얼음', 960, 120, { size: 34, alpha: win(t, 22, 30), bg: 'rgba(0,30,60,.6)' });
+    pill('약 1만 4천 년 전 · 얼음이 녹으며 땅을 깎다', 960, 120, { size: 34, alpha: win(t, 31, 40.5), bg: 'rgba(0,30,60,.6)' });
+    text('호수 · 계곡 · 폭포', 960, 950, { size: 40, weight: 900, color: '#bfe6ff', alpha: win(t, 37, 41) });
+    ctx.restore();
+  }
+  // C: Grand Canyon of the Yellowstone (39-60)
+  if (t > 39) {
+    ctx.save(); ctx.globalAlpha = win(t, 39, 61, 1.2);
+    fillRect(vgrad(0, 400, [[0, '#7db3dc'], [1, '#dbe9f1']]), 0, 0, W, 400);
+    ridge(330, 50, 4, '#3f5a46');
+    // far falls
+    const fx = 960, ftop = 360, fbot = 640;
+    ctx.fillStyle = '#7e6a52'; ctx.fillRect(820, 330, 280, 330);
+    ctx.fillStyle = vgrad(ftop, fbot, [[0, '#e8f6ff'], [1, '#ffffff']]); ctx.fillRect(fx - 34, ftop, 68, fbot - ftop);
+    for (let i = 0; i < 80; i++) { const f = (t * .9 + R(i)) % 1; ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(fx - 34 + R(i + 1) * 68, ftop + f * (fbot - ftop), 3, 14); }
+    for (let i = 0; i < 16; i++) { const f = (t * .3 + R(i + 30)) % 1; puff(fx + (R(i + 31) - .5) * 200, fbot - f * 120, 50 + f * 80, .45 * (1 - f)); }
+    // walls
+    const wallG = (x0, x1) => { const g = ctx.createLinearGradient(x0, 0, x1, 0); g.addColorStop(0, '#d9a441'); g.addColorStop(.3, '#efd27a'); g.addColorStop(.5, '#c96a2c'); g.addColorStop(.7, '#f1e2bd'); g.addColorStop(1, '#b4542a'); return g; };
+    ctx.fillStyle = wallG(0, 900);
+    ctx.beginPath(); ctx.moveTo(0, 300); ctx.lineTo(820, 340); ctx.lineTo(900, 660); ctx.lineTo(760, H); ctx.lineTo(0, H); ctx.fill();
+    ctx.fillStyle = wallG(1920, 1020);
+    ctx.beginPath(); ctx.moveTo(W, 290); ctx.lineTo(1100, 340); ctx.lineTo(1020, 660); ctx.lineTo(1160, H); ctx.lineTo(W, H); ctx.fill();
+    // streaks
+    ctx.save(); ctx.globalAlpha *= .35;
+    for (let i = 0; i < 40; i++) { const left = i % 2 === 0; const x = left ? R(i) * 780 : 1140 + R(i) * 780; ctx.strokeStyle = R(i + 1) > .5 ? '#fff4d8' : '#8a3a1a'; ctx.lineWidth = 3 + R(i + 2) * 8; ctx.beginPath(); ctx.moveTo(x, 330 + R(i + 3) * 60); ctx.lineTo(x + (left ? 40 : -40), H); ctx.stroke(); }
+    ctx.restore();
+    // river
+    ctx.fillStyle = '#3c9a8a'; ctx.beginPath(); ctx.moveTo(900, 660); ctx.lineTo(1020, 660); ctx.lineTo(1160, H); ctx.lineTo(760, H); ctx.fill();
+    for (let i = 0; i < 30; i++) { const f = (t * .25 + R(i + 60)) % 1; ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(lerp(930, 820, f) + R(i) * lerp(60, 300, f), lerp(660, H, f), 14 + f * 30, 3); }
+    for (let i = 0; i < 40; i++) { const left = i < 20; pine(left ? R(i) * 820 : 1100 + R(i) * 820, 310 + R(i + 1) * 30, 40 + R(i + 2) * 40, '#23402c'); }
+    pill('옐로스톤 그랜드캐니언', 960, 110, { size: 38, alpha: win(t, 41, 59.5), bg: 'rgba(0,0,0,.55)' });
+    pill('뜨거운 지하수가 화산암을 변질시켜 생긴 노랑·붉은빛', 960, 860, { size: 30, alpha: win(t, 47, 59.5), bg: 'rgba(60,20,0,.7)', border: '#ffcf8a' });
+    pill('로어 폭포', 1150, 470, { size: 24, alpha: win(t, 43, 59) });
+    ctx.restore();
+  }
+}
+
+// 6. Hydrothermal
+function s6(t) {
+  // A: plumbing cross-section (0-36)
+  if (t < 37) {
+    ctx.save(); ctx.globalAlpha = clamp((37 - t) / 1.2);
+    const S = 420;
+    fillRect(vgrad(0, S, [[0, '#5d7f9d'], [1, '#c9d8e2']]), 0, 0, W, S);
+    ridge(S - 30, 30, 6, '#4f6a55');
+    // clouds & rain
+    const rain = win(t, 1, 14, 1.5);
+    for (let i = 0; i < 6; i++) puff(200 + i * 300 + Math.sin(t * .2 + i) * 30, 90 + R(i) * 40, 170, .7 * rain, '230,235,240');
+    ctx.save(); ctx.strokeStyle = `rgba(160,200,240,${.7 * rain})`; ctx.lineWidth = 2;
+    for (let i = 0; i < 140; i++) { const f = (t * 1.4 + R(i)) % 1, x = R(i + 1) * W, y = 140 + f * (S - 140); ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 6, y + 22); ctx.stroke(); }
+    ctx.restore();
+    // ground
+    fillRect(vgrad(S, H, [[0, '#7a6550'], [.55, '#4a3124'], [.82, '#6a2412'], [1, '#e2541a']]), 0, S, W, H - S);
+    for (let i = 0; i < 5; i++) { ctx.strokeStyle = 'rgba(0,0,0,.2)'; ctx.lineWidth = 2; ctx.beginPath(); for (let x = 0; x <= W; x += 30) { const y = S + 70 + i * 110 + Math.sin(x * .005 + i * 1.7) * 14; x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); }
+    glow(960, H + 120, 760, 'rgba(255,170,60,.75)', .8 + .2 * Math.sin(t * 2));
+    // percolation paths
+    const pg = prog(t, 5, 9);
+    const dn = [[240, S, 300, 700, 520, 920], [560, S, 520, 700, 700, 900], [1700, S, 1640, 700, 1420, 920], [1380, S, 1440, 700, 1240, 900]];
+    ctx.save(); ctx.globalAlpha *= pg; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.setLineDash([22, 18]); ctx.lineDashOffset = -t * 70;
+    ctx.strokeStyle = vgrad(S, 920, [[0, '#62c6ff'], [1, '#ff6a2a']]);
+    dn.forEach(([a, b, c, d, e, f]) => { ctx.beginPath(); ctx.moveTo(a, b); ctx.quadraticCurveTo(c, d, e, f); ctx.stroke(); });
+    ctx.restore();
+    const up = prog(t, 12, 15);
+    const gx = 700, hx = 1250, mx = 1620;
+    ctx.save(); ctx.globalAlpha *= up; ctx.lineWidth = 12; ctx.lineCap = 'round'; ctx.setLineDash([22, 18]); ctx.lineDashOffset = -t * 90; ctx.strokeStyle = '#ff7a2a';
+    ctx.beginPath(); ctx.moveTo(600, 920); ctx.quadraticCurveTo(700, 760, gx, S + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(1320, 910); ctx.quadraticCurveTo(1250, 700, hx, S + 4); ctx.stroke();
+    ctx.restore();
+    // geyser chamber + pressure gauge
+    const cyc = (t - 15) % 11, erupting = t > 15 && cyc > 7.5;
+    const pressure = t < 15 ? prog(t, 12, 15) * .3 : (erupting ? 1 - (cyc - 7.5) / 3.5 : .3 + .7 * cyc / 7.5);
+    ctx.fillStyle = '#ff9a3a'; ctx.globalAlpha = up; ctx.beginPath(); ctx.ellipse(gx, 640, 60, 34, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.save(); ctx.globalAlpha *= up;
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.beginPath(); ctx.roundRect(gx + 100, 560, 36, 180, 10); ctx.fill();
+    ctx.fillStyle = pressure > .85 ? '#ff4a2a' : '#ffb03a'; ctx.fillRect(gx + 106, 734 - 168 * pressure, 24, 168 * pressure);
+    text('압력', gx + 118, 535, { size: 24 });
+    ctx.restore();
+    if (erupting) geyser(gx, S, t, Math.sin((cyc - 7.5) / 3.5 * Math.PI) * .75, .55, 160);
+    else for (let i = 0; i < 6; i++) { const f = (t * .3 + R(i)) % 1; puff(gx + f * 40, S - f * 120, 30 + f * 50, .3 * (1 - f)); }
+    // hot spring
+    ctx.fillStyle = '#2b93c2'; ctx.beginPath(); ctx.ellipse(hx, S, 130, 16, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#e69a33'; ctx.lineWidth = 6; ctx.stroke();
+    for (let i = 0; i < 10; i++) { const f = (t * .25 + R(i + 20)) % 1; puff(hx + (R(i) - .5) * 200 + f * 60, S - 10 - f * 160, 40 + f * 70, .35 * Math.sin(f * Math.PI)); }
+    // mud pot
+    ctx.fillStyle = '#8a7a66'; ctx.beginPath(); ctx.ellipse(mx, S, 90, 14, 0, 0, TAU); ctx.fill();
+    for (let i = 0; i < 5; i++) { const f = (t * .8 + R(i + 40)) % 1; ctx.strokeStyle = `rgba(90,75,60,${1 - f})`; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(mx + (R(i + 41) - .5) * 120, S - 4, 6 + f * 18, Math.PI, 0); ctx.stroke(); }
+    // labels
+    pill('빗물·눈 녹은 물이 스며든다', 400, 480, { size: 26, alpha: win(t, 5, 35), bg: 'rgba(0,30,60,.7)' });
+    pill('마그마의 열로 뜨겁게', 960, 800, { size: 26, alpha: win(t, 8, 35), bg: 'rgba(80,20,0,.7)' });
+    pill('간헐천 · 압력이 쌓였다 한순간에', gx, S - 230 + 120, { size: 26, alpha: win(t, 15.5, 35), bg: 'rgba(0,0,0,.6)' });
+    pill('온천 · 조용히 솟아오름', hx, S - 90, { size: 26, alpha: win(t, 19, 35), bg: 'rgba(0,0,0,.6)' });
+    pill('진흙 웅덩이', mx, S - 60, { size: 24, alpha: win(t, 21, 35), bg: 'rgba(0,0,0,.6)' });
+    ctx.restore();
+  }
+  // B: stats (35-49)
+  if (t > 35 && t < 50) {
+    ctx.save(); ctx.globalAlpha = win(t, 35, 50, 1.2);
+    fillRect('#0e1216');
+    ctx.save(); ctx.globalAlpha *= .25; prismatic(1500, 540, 420, t); ctx.restore();
+    const n = Math.round(10000 * easeOut(prog(t, 36.5, 40)));
+    text(`${n.toLocaleString()}+`, 640, 400, { size: 140, weight: 900, color: '#ffcf8a' });
+    text('열수 지형 (간헐천·온천·진흙 웅덩이·분기공)', 640, 510, { size: 30, weight: 500 });
+    const half = easeOut(prog(t, 41.5, 45));
+    ctx.save(); ctx.globalAlpha *= prog(t, 41, 42);
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.beginPath(); ctx.roundRect(240, 640, 800, 50, 25); ctx.fill();
+    ctx.fillStyle = '#ff8a2a'; ctx.beginPath(); ctx.roundRect(240, 640, 800 * .5 * half, 50, 25); ctx.fill();
+    ctx.restore();
+    text('전 세계 간헐천의 약 절반이 이곳에', 640, 760, { size: 40, weight: 900, alpha: prog(t, 42, 43.5) });
+    ctx.restore();
+  }
+  // C: prismatic colors & microbes (48-70)
+  if (t > 48) {
+    ctx.save(); ctx.globalAlpha = win(t, 48, 71, 1.2);
+    fillRect('#4c3220');
+    prismatic(620, 560, 470, t);
+    steamField(620, 520, 500, t, 20, .7, .25);
+    // legend
+    const items = [['#0c4f8f', '가장 뜨거운 중심 (~87°C)', '미생물이 거의 없어 맑은 파랑'], ['#e9c64e', '노랑 (~70°C)', '시아노박테리아'], ['#d26a1f', '주황 (~60°C)', '다른 미생물 군집'], ['#6e3412', '갈색 (더 낮은 온도)', '두꺼운 미생물 매트']];
+    items.forEach(([c, a, b], i) => {
+      const y = 260 + i * 150, al = prog(t, 51 + i * 1.3, 52.5 + i * 1.3);
+      ctx.save(); ctx.globalAlpha *= al; ctx.fillStyle = c; ctx.beginPath(); ctx.roundRect(1200, y - 40, 80, 80, 14); ctx.fill(); ctx.restore();
+      text(a, 1310, y - 14, { size: 32, align: 'left', alpha: al });
+      text(b, 1310, y + 26, { size: 24, align: 'left', weight: 500, color: '#e8dccb', alpha: al });
+    });
+    arrow(1150, 230, 1150, 760, 'rgba(255,255,255,.6)', 3, 16);
+    text('고온', 1150, 205, { size: 22, alpha: prog(t, 51, 52) }); text('저온', 1150, 795, { size: 22, alpha: prog(t, 51, 52) });
+    // microbe magnifier
+    const ma = win(t, 58, 70);
+    if (ma > 0) {
+      ctx.save(); ctx.globalAlpha *= ma;
+      ctx.beginPath(); ctx.arc(860, 300, 150, 0, TAU); ctx.fillStyle = '#e8b94a'; ctx.fill(); ctx.clip();
+      for (let i = 0; i < 40; i++) {
+        const x = 720 + R(i) * 280 + Math.sin(t + i) * 10, y = 160 + R(i + 1) * 280 + Math.cos(t * .8 + i) * 10;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(R(i + 2) * TAU + t * .3);
+        ctx.fillStyle = R(i + 3) > .5 ? '#5f8a2a' : '#a65c1a'; ctx.beginPath(); ctx.roundRect(-14, -5, 28, 10, 5); ctx.fill(); ctx.restore();
+      }
+      ctx.restore();
+      ctx.save(); ctx.globalAlpha *= ma; ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.arc(860, 300, 150, 0, TAU); ctx.stroke(); ctx.restore();
+      text('뜨거운 물에서 사는 미생물', 860, 490, { size: 26, alpha: ma });
+    }
+    text('화산이 만든 땅 = 생명이 살아가는 거대한 실험실', 960, 900, { size: 40, weight: 900, color: '#ffe3b0', alpha: win(t, 63, 70) });
+    ctx.restore();
+  }
+}
+
+// 7. Will it erupt?
+function s7(t) {
+  fillRect('#0a0f14');
+  ctx.save(); ctx.strokeStyle = 'rgba(80,140,180,.08)'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  ctx.restore();
+  text('옐로스톤 화산 관측소 · 24시간 모니터링', 960, 70, { size: 38, weight: 900, alpha: prog(t, .5, 2) });
+  const panel = (x, y, w, h, title, a) => {
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = 'rgba(20,30,40,.85)'; ctx.strokeStyle = 'rgba(120,190,230,.35)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 16); ctx.fill(); ctx.stroke(); ctx.restore();
+    text(title, x + 24, y + 34, { size: 24, align: 'left', color: '#9fd8ff', alpha: a, weight: 700 });
+  };
+  // seismograph
+  const a1 = prog(t, 2, 3.5);
+  panel(80, 120, 860, 360, '지진계 · 땅의 떨림', a1);
+  ctx.save(); ctx.globalAlpha = a1; ctx.beginPath(); ctx.rect(100, 170, 820, 290); ctx.clip();
+  ctx.strokeStyle = '#7dffb0'; ctx.lineWidth = 2; ctx.beginPath();
+  for (let x = 100; x <= 920; x += 3) {
+    const k = (x - 100) / 3 + Math.floor(t * 40);
+    const burst = R(Math.floor(k / 60)) > .8 ? 1 : 0;
+    const amp = 8 + burst * 70 * Math.exp(-((k % 60) / 14));
+    const y = 315 + (R(k) - .5) * amp * 2;
+    x === 100 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke(); ctx.restore();
+  // GPS map
+  const a2 = prog(t, 4, 5.5);
+  panel(980, 120, 860, 360, 'GPS · 땅의 오르내림', a2);
+  ctx.save(); ctx.globalAlpha = a2;
+  blobPath(1410, 310, 150, 3, .1, .65); ctx.strokeStyle = '#ffb35a'; ctx.setLineDash([10, 8]); ctx.lineWidth = 3; ctx.stroke(); ctx.setLineDash([]);
+  text('칼데라 경계', 1410, 220, { size: 20, weight: 500, color: '#ffb35a' });
+  for (let i = 0; i < 12; i++) {
+    const x = 1070 + R(i + 5) * 680, y = 190 + R(i + 6) * 250, d = Math.sin(t * .8 + i) * 18;
+    ctx.fillStyle = '#9fd8ff'; ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fill();
+    ctx.strokeStyle = d > 0 ? '#7dffb0' : '#ff8a6a'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - d); ctx.stroke();
+  }
+  ctx.restore();
+  // magma reservoir sponge
+  const a3 = prog(t, 9, 10.5);
+  panel(80, 510, 860, 350, '지하 마그마 저장소', a3);
+  ctx.save(); ctx.globalAlpha = a3;
+  ctx.save(); blobPath(510, 690, 250, 2, .07, .46); ctx.fillStyle = '#4a3a34'; ctx.fill(); ctx.clip();
+  for (let i = 0; i < 160; i++) { ctx.fillStyle = `rgba(${90 + R(i) * 40 | 0},${70 + R(i) * 30 | 0},${60 + R(i) * 30 | 0},1)`; ctx.beginPath(); ctx.arc(250 + R(i + 1) * 520, 570 + R(i + 2) * 240, 10 + R(i + 3) * 18, 0, TAU); ctx.fill(); }
+  const melt = prog(t, 11, 14);
+  for (let i = 0; i < 26; i++) glow(280 + R(i + 300) * 460, 620 + R(i + 301) * 150, 22 * melt, 'rgba(255,120,30,.95)', .7 + .3 * Math.sin(t * 3 + i));
+  ctx.restore();
+  text('대부분 굳은 결정', 300, 835, { size: 24, weight: 500, color: '#d8ccc4', alpha: prog(t, 11, 12) });
+  text('녹아 있는 부분 · 약 5~15%', 720, 835, { size: 24, weight: 700, color: '#ffb35a', alpha: prog(t, 12.5, 14) });
+  ctx.restore();
+  // USGS gauge
+  const a4 = prog(t, 16, 17.5);
+  panel(980, 510, 860, 350, '미국지질조사국(USGS) 평가', a4);
+  ctx.save(); ctx.globalAlpha = a4;
+  const gx = 1410, gy = 820, gr = 160;
+  const segs = ['#3fbf7f', '#c9cf3f', '#ff9a3a', '#ff4a2a'];
+  segs.forEach((c, i) => { ctx.strokeStyle = c; ctx.lineWidth = 36; ctx.beginPath(); ctx.arc(gx, gy, gr, Math.PI + i * Math.PI / 4 + .02, Math.PI + (i + 1) * Math.PI / 4 - .02); ctx.stroke(); });
+  const needle = Math.PI + lerp(Math.PI * .9, Math.PI * .1, easeOut(prog(t, 17, 20)));
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + Math.cos(needle) * (gr - 30), gy + Math.sin(needle) * (gr - 30)); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(gx, gy, 12, 0, TAU); ctx.fill();
+  ctx.restore();
+  text('가까운 미래 초거대 분화 가능성', 1410, 580, { size: 28, weight: 500, alpha: a4 });
+  text('매우 낮음', 1410, 770, { size: 52, weight: 900, color: '#7dffb0', alpha: prog(t, 19.5, 21) });
+  // final
+  const fa = win(t, 30, 40.5);
+  if (fa > 0) {
+    ctx.save(); ctx.globalAlpha = fa * .85; fillRect('#05080b'); ctx.restore();
+    glow(960, 560, 380, 'rgba(255,100,30,.5)', fa * (.7 + .3 * Math.sin(t * 2.5)));
+    text('그래도, 옐로스톤은', 960, 470, { size: 50, weight: 500, alpha: fa });
+    text('여전히 살아 있는 화산', 960, 570, { size: 80, weight: 900, color: '#ffb35a', alpha: fa });
+  }
+}
+
+// 8. Closing
+function s8(t) {
+  const sun = prog(t, 0, 30);
+  fillRect(vgrad(0, H, [[0, '#2a2347'], [.35, '#b4506a'], [.6, '#f2945a'], [.75, '#ffd08a'], [1, '#3a2a2a']]));
+  glow(1380, 600 + sun * 60, 520, 'rgba(255,220,150,.7)');
+  ctx.fillStyle = '#fff2c8'; ctx.beginPath(); ctx.arc(1380, 600 + sun * 60, 70, 0, TAU); ctx.fill();
+  ridge(640, 120, 2, '#5b3a52', .7);
+  ridge(720, 80, 5, '#3c2638', 1.2);
+  steamField(520, 760, 300, t, 26, 1, .3);
+  steamField(1250, 790, 260, t + 3, 20, .8, .25);
+  ridge(820, 40, 8, '#21141c', 1.5);
+  fillRect('#1a1016', 0, 860, W, H - 860);
+  for (let i = 0; i < 7; i++) {
+    const x = -200 + ((t * 26 + i * 170 + R(i) * 80) % 2300), y = 862 + (i % 3) * 14;
+    bison(x, y, .9 + (i % 3) * .12, t * 3.2 + i, '#0e080b');
+  }
+  const kw = ['지구 깊은 곳의 열기', '수백만 년의 대륙 이동', '세 번의 초거대 폭발', '빙하가 남긴 손길'];
+  kw.forEach((k, i) => pill(k, 960 + (i - 1.5) * 420, 160, { size: 28, alpha: win(t, 1.5 + i * 1.6, 12.5, .8), bg: 'rgba(30,10,30,.55)', border: 'rgba(255,220,170,.6)' }));
+  text('지구는 지금도 움직이고 있다', 960, 330, { size: 70, weight: 900, alpha: win(t, 13, 22.5) });
+  text('그 아래에서 숨 쉬는 거대한 불의 심장', 960, 330, { size: 60, weight: 900, color: '#ffe0b0', alpha: win(t, 22.5, 30.5) });
+  const end = prog(t, 27.5, 30);
+  if (end > 0) { ctx.save(); ctx.globalAlpha = end; fillRect('#000'); ctx.restore(); text('🌋 옐로스톤', 960, 500, { size: 72, weight: 900, alpha: end }); text('발밑에 잠든 거대한 불의 이야기', 960, 600, { size: 36, weight: 500, color: '#ffcf8a', alpha: end }); }
+}
+
+/* ---------- script & timing ---------- */
+const SCENES = [
+  { start: 0, end: 40, title: '오프닝', draw: s1, lines: [
+    '미국 와이오밍주의 이곳은 땅에서 김이 오르고, 물기둥이 하늘로 치솟고, 진흙이 부글부글 끓습니다.',
+    '1872년, 세계 최초의 국립공원으로 지정된 옐로스톤입니다.',
+    '아름다운 풍경 같지만, 사실 이곳은 거대한 화산의 한가운데입니다.',
+    '지금 서 있는 땅 아래 수 킬로미터에는 마그마가 잠들어 있습니다.',
+    '옐로스톤은 도대체 어떻게 만들어졌을까요?'] },
+  { start: 40, end: 100, title: '시작은 지구 깊은 곳에서', draw: s2, lines: [
+    '이야기는 땅 위가 아니라 지구 깊숙한 곳에서 시작됩니다.',
+    "맨틀 깊은 곳에서 유난히 뜨거운 물질이 기둥처럼 올라오는 곳이 있는데, 과학자들은 이것을 '열점(핫스팟)'이라고 부릅니다.",
+    '이 열기가 지각 아래 암석을 녹여 마그마를 만들고, 마그마는 틈을 찾아 위로 올라옵니다.',
+    '하와이 섬들을 만든 것도 바로 이런 열점입니다.'] },
+  { start: 100, end: 160, title: '움직이는 대륙, 남겨진 발자국', draw: s3, lines: [
+    '그런데 흥미로운 사실이 있습니다. 열점은 거의 제자리에 있는데, 그 위의 땅은 움직입니다.',
+    '북아메리카 판은 1년에 몇 센티미터씩 남서쪽으로 천천히 이동하고 있습니다.',
+    '그 결과 약 1,600만 년 동안 열점 위를 지나간 땅마다 화산 흔적이 남았습니다.',
+    '아이다호에서 와이오밍까지 이어지는 이 화산의 발자국, 그 가장 최근의 자리가 바로 지금의 옐로스톤입니다.',
+    '열점이 움직인 게 아니라, 대륙이 열점 위를 지나가고 있는 거죠.'] },
+  { start: 160, end: 240, title: '세 번의 초거대 폭발', draw: s4, lines: [
+    '옐로스톤에서는 지난 약 200만 년 동안 세 번의 초거대 분화가 일어났습니다.',
+    '첫 번째는 약 210만 년 전으로, 지금까지 알려진 지구 역사상 가장 큰 화산 폭발 중 하나입니다.',
+    '두 번째는 약 130만 년 전, 그리고 세 번째는 약 63만 년 전에 일어났습니다.',
+    '분출된 화산재는 북아메리카 대륙의 넓은 지역을 뒤덮었습니다.',
+    '이렇게 엄청난 양의 마그마가 한꺼번에 빠져나가자, 그 위의 땅이 버티지 못하고 푹 꺼져 내려앉았습니다.',
+    "이렇게 생긴 거대한 가마솥 모양의 분지를 '칼데라'라고 부릅니다.",
+    '마지막 분화로 생긴 옐로스톤 칼데라의 길이는 무려 70~80km에 달합니다.',
+    '너무 거대해서 땅 위에서는 그것이 분화구라는 사실조차 알아보기 어렵습니다.'],
+    // ash map + cube comparison sit in the middle; pin the collapse lines to the collapse animation
+    times: [1.5, 15.5, 25, 34, 55.5, 66, 70, 75, 79.5] },
+  { start: 240, end: 300, title: '용암, 그리고 얼음이 다듬은 풍경', draw: s5, lines: [
+    '거대한 폭발 이후에도 땅은 쉬지 않았습니다.',
+    '수십만 년 동안 끈적한 용암이 여러 차례 흘러나와 칼데라를 채웠고, 오늘날 옐로스톤 고원의 바탕을 이루었습니다.',
+    '그 위로는 빙하기가 찾아왔습니다.',
+    '두께가 1km 가까운 얼음이 고원 전체를 덮었다가 약 1만 4천 년 전쯤 녹아 사라졌습니다.',
+    '빙하와 그 녹은 물이 땅을 깎고 다듬으면서 호수와 계곡, 폭포가 만들어졌습니다.',
+    "노랗고 붉은빛을 띠는 '옐로스톤 그랜드캐니언'의 암벽은 뜨거운 지하수가 화산암을 오랜 세월 변질시키면서 생긴 색입니다."],
+    times: [1, 6, 21, 25, 35, 45, 59.5] },
+  { start: 300, end: 370, title: '지금도 살아 숨 쉬는 땅', draw: s6, lines: [
+    '그렇다면 지금 우리가 보는 간헐천과 온천은 어떻게 생기는 걸까요?',
+    '빗물과 눈 녹은 물이 땅속 깊이 스며들면 아래에 있는 마그마의 열을 받아 뜨겁게 데워집니다.',
+    '압력이 쌓였다가 한순간에 터져 나오는 것이 간헐천이고, 조용히 솟아오르는 것이 온천입니다.',
+    '옐로스톤에는 1만 개가 넘는 열수 지형이 있고, 전 세계 간헐천의 절반가량이 이곳에 모여 있습니다.',
+    '그랜드 프리즈매틱 스프링의 무지개빛은 뜨거운 물에서도 살아가는 미생물들이 온도에 따라 서로 다른 색을 띠기 때문입니다.',
+    '옐로스톤은 화산이 만든 땅이면서 동시에 생명이 살아가는 거대한 실험실인 셈입니다.'],
+    times: [1, 6, 15.5, 36.5, 50, 62, 69.5] },
+  { start: 370, end: 410, title: '다시 폭발할까?', draw: s7, lines: [
+    '그렇다면 옐로스톤은 언젠가 다시 폭발할까요?',
+    '과학자들은 옐로스톤을 24시간 관측하고 있습니다.',
+    '현재 땅속 마그마 저장소는 대부분 굳어 있는 상태이고, 녹아 있는 부분은 일부에 불과한 것으로 알려져 있습니다.',
+    '미국지질조사국은 가까운 미래에 초거대 분화가 일어날 가능성은 매우 낮다고 보고 있습니다.',
+    '다만 옐로스톤이 여전히 살아 있는 화산이라는 사실은 분명합니다.'],
+    times: [.8, 4.5, 9.5, 17, 30, 39.5] },
+  { start: 410, end: 440, title: '클로징', draw: s8, lines: [
+    '지구 깊은 곳의 열기, 수백만 년에 걸친 대륙의 이동, 세 번의 초거대 폭발, 그리고 빙하가 남긴 손길까지.',
+    '옐로스톤은 지구가 지금도 움직이고 있다는 것을 가장 생생하게 보여주는 장소입니다.',
+    '다음에 옐로스톤의 사진을 보게 된다면 그 아래에서 숨 쉬고 있는 거대한 불의 심장을 한번 떠올려 보세요.'],
+    times: [1, 12.5, 21, 28] },
+];
+const CUES = [];
+SCENES.forEach((s, si) => {
+  let times = s.times;
+  if (!times) {
+    const a = s.start + 1, b = s.end - 1, w = s.lines.map(l => l.length + 10), sum = w.reduce((x, y) => x + y, 0);
+    let acc = a; times = [];
+    s.lines.forEach((l, i) => { times.push(acc - s.start); acc += (b - a) * w[i] / sum; });
+    times.push(b - s.start);
+  }
+  s.lines.forEach((l, i) => CUES.push({ start: s.start + times[i], end: s.start + times[i + 1], text: l, scene: si }));
+});
+
+/* ---------- frame ---------- */
+let showCC = true;
+function wrap(str, maxW) {
+  const words = str.split(' '), lines = []; let cur = '';
+  words.forEach(w => { const test = cur ? cur + ' ' + w : w; if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; } else cur = test; });
+  if (cur) lines.push(cur); return lines;
+}
+function subtitles(T) {
+  const c = CUES.find(c => T >= c.start && T < c.end);
+  if (!c || !showCC) return;
+  const a = win(T, c.start, c.end, .25);
+  ctx.save(); ctx.font = `500 40px ${FONT}`;
+  const lines = wrap(c.text, 1500), lh = 56, h = lines.length * lh + 28;
+  const wmax = Math.max(...lines.map(l => ctx.measureText(l).width)) + 60;
+  const y0 = H - 50 - h;
+  ctx.globalAlpha = a * .72; ctx.fillStyle = '#000'; ctx.beginPath(); ctx.roundRect(W / 2 - wmax / 2, y0, wmax, h, 14); ctx.fill();
+  ctx.globalAlpha = a; ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, y0 + 14 + lh / 2 + i * lh));
+  ctx.restore();
+}
+function chapter(T, s, i) {
+  const lt = T - s.start, a = win(lt, .8, 7, .8);
+  if (a <= 0 || i === 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = '#ff8a2a'; ctx.fillRect(60, 46, 6, 64);
+  text(String(i + 1).padStart(2, '0'), 86, 64, { size: 26, align: 'left', color: '#ffb36b' });
+  text(s.title, 86, 98, { size: 34, align: 'left', weight: 900 });
+  ctx.restore();
+}
+function renderFrame(T) {
+  T = clamp(T, 0, TOTAL - .001);
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  fillRect('#000');
+  const si = SCENES.findIndex(s => T >= s.start && T < s.end), s = SCENES[si];
+  ctx.save(); s.draw(T - s.start); ctx.restore();
+  // scene boundary dip
+  const lt = T - s.start, d = s.end - s.start, f = .5;
+  const dip = Math.max(si > 0 ? 1 - lt / f : 0, si < SCENES.length - 1 ? 1 - (d - lt) / f : 0);
+  if (dip > 0) { ctx.globalAlpha = clamp(dip); fillRect('#000'); ctx.globalAlpha = 1; }
+  chapter(T, s, si);
+  subtitles(T);
+  ctx.restore();
+  return si;
+}
+window.renderFrame = renderFrame;
+window.TOTAL = TOTAL;
+
+/* ---------- player ---------- */
+const isRender = new URLSearchParams(location.search).has('render');
+if (isRender) document.body.classList.add('render');
+const $ = id => document.getElementById(id);
+let playing = false, T = 0, last = 0, lastCue = null, tts = false;
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const chapBox = $('chapters');
+SCENES.forEach((s, i) => { const b = document.createElement('button'); b.textContent = `${i + 1}. ${s.title}`; b.onclick = () => { seek(s.start); }; chapBox.appendChild(b); });
+function ui(si) {
+  $('time').textContent = `${fmt(T)} / ${fmt(TOTAL)}`;
+  $('seek').value = T;
+  [...chapBox.children].forEach((b, i) => b.classList.toggle('on', i === si));
+}
+function speak(T) {
+  if (!tts || !('speechSynthesis' in window)) return;
+  const c = CUES.find(c => T >= c.start && T < c.end);
+  if (c && c !== lastCue) {
+    lastCue = c; speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(c.text); u.lang = 'ko-KR'; u.rate = 1.05; speechSynthesis.speak(u);
+  }
+}
+function tick(now) {
+  if (playing) { T += (now - last) / 1000; if (T >= TOTAL) { T = TOTAL; setPlaying(false); } }
+  last = now;
+  const si = renderFrame(T); ui(si); if (playing) speak(T);
+  requestAnimationFrame(tick);
+}
+function setPlaying(p) {
+  playing = p; if (p && T >= TOTAL - .01) T = 0;
+  $('play').textContent = p ? '❚❚ 일시정지' : '▶ 재생'; $('bigplay').hidden = p;
+  if (!p && 'speechSynthesis' in window) speechSynthesis.cancel();
+  lastCue = null;
+}
+function seek(t) { T = clamp(+t, 0, TOTAL); lastCue = null; if ('speechSynthesis' in window) speechSynthesis.cancel(); }
+if (!isRender) {
+  $('play').onclick = $('bigplay').onclick = () => setPlaying(!playing);
+  $('seek').oninput = e => seek(e.target.value);
+  $('cc').onclick = e => { showCC = !showCC; e.target.setAttribute('aria-pressed', showCC); };
+  $('tts').onclick = e => { tts = !tts; e.target.setAttribute('aria-pressed', tts); lastCue = null; if (!tts && 'speechSynthesis' in window) speechSynthesis.cancel(); };
+  $('fs').onclick = () => { const st = document.querySelector('.stage'); document.fullscreenElement ? document.exitFullscreen() : st.requestFullscreen?.(); };
+  document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); } if (e.code === 'ArrowRight') seek(T + 5); if (e.code === 'ArrowLeft') seek(T - 5); });
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => requestAnimationFrame(t => { last = t; tick(t); }));
+}
+</script>
+</body>
+</html>
